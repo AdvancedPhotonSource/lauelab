@@ -27,17 +27,20 @@ def cubic_ipf_colors(directions):
         [0.0, 1.0 / np.sqrt(2.0), 1.0 / np.sqrt(2.0)],
         [1.0 / np.sqrt(3.0)] * 3,
     ])
-    for index, direction in enumerate(flat):
-        norm = np.linalg.norm(direction)
-        if not np.isfinite(norm):
-            continue
-        if norm < 1e-12:
-            result[index] = 0.0
-            continue
-        folded = np.sort(np.abs(direction)) / norm
-        coefficients = np.maximum(np.linalg.solve(poles, folded), 0.0)
-        maximum = np.max(coefficients)
-        result[index] = coefficients / maximum if maximum > 1e-12 else 0.0
+    norms = np.linalg.norm(flat, axis=1)
+    finite = np.isfinite(norms)
+    result[finite & (norms < 1e-12)] = 0.0
+    usable = finite & (norms >= 1e-12)
+    if np.any(usable):
+        # Fold every direction into the standard triangle, then express it in
+        # the pole basis: one solve for all rows with the poles as the matrix.
+        folded = np.sort(np.abs(flat[usable]), axis=1) / norms[usable, None]
+        coefficients = np.maximum(np.linalg.solve(poles, folded.T).T, 0.0)
+        maximum = coefficients.max(axis=1)
+        scaled = np.zeros_like(coefficients)
+        positive = maximum > 1e-12
+        scaled[positive] = coefficients[positive] / maximum[positive, None]
+        result[usable] = scaled
     return result.reshape(values.shape)
 
 
@@ -57,16 +60,21 @@ def rodrigues_colors(vectors, *, max_angle_deg=None):
         raise ValueError("max_angle_deg must be positive and finite")
 
     result = np.zeros_like(flat)
-    for index, (vector, length) in enumerate(zip(flat, lengths, strict=True)):
-        if not np.isfinite(length) or length < 1e-12:
-            continue
-        angle = 2.0 * np.degrees(np.arctan(length))
-        x, y, z = np.clip(vector / length * angle / max_angle_deg, -1.0, 1.0)
-        result[index] = np.clip([
-            max(x, 0) + max(-y, 0) / 2 + max(-z, 0) / 2,
-            max(y, 0) + max(-x, 0) / 2 + max(-z, 0) / 2,
-            max(z, 0) + max(-x, 0) / 2 + max(-y, 0) / 2,
-        ], 0.0, 1.0)
+    usable = np.isfinite(lengths) & (lengths >= 1e-12)
+    if np.any(usable):
+        angles = 2.0 * np.degrees(np.arctan(lengths[usable]))
+        scaled = np.clip(
+            flat[usable] / lengths[usable, None] * (angles / max_angle_deg)[:, None],
+            -1.0,
+            1.0,
+        )
+        positive = np.maximum(scaled, 0.0)
+        negative = np.maximum(-scaled, 0.0)
+        result[usable] = np.clip(np.stack([
+            positive[:, 0] + negative[:, 1] / 2 + negative[:, 2] / 2,
+            positive[:, 1] + negative[:, 0] / 2 + negative[:, 2] / 2,
+            positive[:, 2] + negative[:, 0] / 2 + negative[:, 1] / 2,
+        ], axis=1), 0.0, 1.0)
     return result.reshape(values.shape)
 
 

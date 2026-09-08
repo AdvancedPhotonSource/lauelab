@@ -28,7 +28,7 @@ dependencies:
   - hdf5=1.14.*
   - zlib
   # binary Python dependencies, kept consistent with the libraries above
-  - numpy
+  - numpy>=2.0
   - h5py
   - cffi
   # notebooks and documentation examples

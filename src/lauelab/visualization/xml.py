@@ -57,6 +57,25 @@ def _integer_array(parent, name, *, path, step, field):
     return values.astype(int)
 
 
+def orientations_from_reciprocals(reciprocals, reference):
+    """Return orientation matrices for finite reciprocal lattices, else NaN.
+
+    One batched inverse of the reference serves every lattice. A singular
+    reference leaves every orientation NaN, as the per-lattice form did.
+    """
+    reciprocals = np.asarray(reciprocals, dtype=float).reshape((-1, 3, 3))
+    rotations = np.full(reciprocals.shape, np.nan)
+    if reference is None:
+        return rotations
+    finite = np.isfinite(reciprocals).all(axis=(1, 2))
+    if np.any(finite):
+        try:
+            rotations[finite] = reciprocal_to_orientation(reciprocals[finite], reference)
+        except np.linalg.LinAlgError:
+            pass
+    return rotations
+
+
 def _load_crystal(steps):
     for step in steps:
         node = step.find("indexing/xtl")
@@ -166,7 +185,6 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
     peak_arrays = []
     pattern_frames = []
     pattern_indices = []
-    rotations = []
     reciprocals = []
     goodness = []
     rms_errors = []
@@ -243,12 +261,6 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
             reciprocal_node = pattern.find("recip_lattice")
             vectors = [_array(reciprocal_node, (name,)) for name in ("astar", "bstar", "cstar")]
             reciprocal = np.asarray(vectors) if all(len(value) == 3 for value in vectors) else np.full((3, 3), np.nan)
-            rotation = np.full((3, 3), np.nan)
-            if reference_recip is not None and np.isfinite(reciprocal).all():
-                try:
-                    rotation = reciprocal_to_orientation(reciprocal, reference_recip)
-                except np.linalg.LinAlgError:
-                    pass
             pattern_row = len(pattern_indices)
             pattern_frames.append(frame_index)
             pattern_indices.append(_integer(
@@ -257,7 +269,6 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
                 step=frame_index,
                 field=f"pattern[{rank}].num",
             ))
-            rotations.append(rotation)
             reciprocals.append(reciprocal)
             goodness.append(_attribute_number(pattern, "goodness"))
             rms_errors.append(_attribute_number(pattern, "rms_error"))
@@ -306,6 +317,7 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
                     target.extend(aligned[valid])
 
     peaks = np.concatenate(peak_arrays) if peak_arrays else np.empty(0, dtype=PEAK_DTYPE)
+    reciprocals = np.asarray(reciprocals, dtype=float).reshape((-1, 3, 3))
     return VisualizationDataset(
         frame_ids=ids,
         sample_positions=positions,
@@ -324,8 +336,8 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
         peaks=peaks,
         pattern_frame_indices=np.asarray(pattern_frames),
         pattern_indices=np.asarray(pattern_indices),
-        pattern_rotations=np.asarray(rotations).reshape((-1, 3, 3)),
-        pattern_reciprocals=np.asarray(reciprocals).reshape((-1, 3, 3)),
+        pattern_rotations=orientations_from_reciprocals(reciprocals, reference_recip),
+        pattern_reciprocals=reciprocals,
         pattern_goodness=np.asarray(goodness),
         pattern_rms_error_deg=np.asarray(rms_errors),
         pattern_n_indexed=np.asarray(pattern_counts),

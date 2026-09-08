@@ -18,6 +18,10 @@ See [Visualization data](../guides/visualization.md) for workflows, coordinate c
 .. autoclass:: VisualizationDataset
    :members: n_frames, n_patterns, n_assignments, pattern_ids
 
+.. autofunction:: load_results
+
+.. autofunction:: convert_xml
+
 .. autofunction:: load_visualization_xml
 ```
 

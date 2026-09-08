@@ -1,0 +1,122 @@
+group /
+  @created
+  @format
+  @lauelab_version
+  @version
+group /assignments
+dataset /assignments/energy_kev dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+dataset /assignments/error_deg dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+dataset /assignments/hkl dtype=<i2 shape=(96, 3) maxshape=('unlimited', 3) chunks=(4096, 3)
+dataset /assignments/peak_index dtype=<i4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+dataset /assignments/pred_intens dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+group /crystal
+  @name
+  @setting
+  @source
+  @space_group
+dataset /crystal/atom_labels dtype=string shape=(1,) maxshape=(1,) chunks=None
+dataset /crystal/atom_occupancies dtype=<f4 shape=(1,) maxshape=(1,) chunks=None
+dataset /crystal/atom_positions dtype=<f8 shape=(1, 3) maxshape=(1, 3) chunks=None
+  @units
+dataset /crystal/atom_symbols dtype=string shape=(1,) maxshape=(1,) chunks=None
+dataset /crystal/lattice_parameters dtype=<f8 shape=(6,) maxshape=(6,) chunks=None
+  @angle_units
+  @units
+group /frames
+dataset /frames/beam_bad dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/beamlines dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/ccd_shutters dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/dates_exposed dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/depths dtype=<f8 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/detector_ids dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/energies_kev dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/exposure_seconds dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/frame_ids dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/hutch_temperature dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/image_shapes dtype=<i4 shape=(4, 2) maxshape=('unlimited', 2) chunks=(1024, 2)
+dataset /frames/indexing_seconds dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/input_images dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/light_on dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/mono_modes dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/n_patterns dtype=<i2 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/n_peaks dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/num_above_threshold dtype=<i8 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/pattern_offsets dtype=<i8 shape=(5,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/peak_boxsize dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/peak_max_cent_to_fit dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/peak_maxwidth dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/peak_minwidth dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/peak_offsets dtype=<i8 shape=(5,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/peaksearch_seconds dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/roi_groups dtype=<i4 shape=(4, 2) maxshape=('unlimited', 2) chunks=(1024, 2)
+dataset /frames/roi_starts dtype=<i4 shape=(4, 2) maxshape=('unlimited', 2) chunks=(1024, 2)
+dataset /frames/sample_distance dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+dataset /frames/sample_names dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/sample_positions dtype=<f8 shape=(4, 3) maxshape=('unlimited', 3) chunks=(1024, 3)
+  @units
+dataset /frames/scan_numbers dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/sum_above_threshold dtype=<f8 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/threshold_ratio dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/threshold_used dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/titles dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/total_sum dtype=<f8 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/user_names dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+group /geometry
+  @path
+dataset /geometry/xml dtype=string shape=() maxshape=() chunks=None
+group /patterns
+dataset /patterns/assignment_offsets dtype=<i8 shape=(5,) maxshape=('unlimited',) chunks=(1024,)
+dataset /patterns/goodness dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /patterns/n_indexed dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /patterns/rank dtype=<i2 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /patterns/reciprocal dtype=<f8 shape=(4, 3, 3) maxshape=('unlimited', 3, 3) chunks=(1024, 3, 3)
+  @includes_two_pi
+  @rows
+  @units
+dataset /patterns/rms_error_deg dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+  @units
+group /peaks
+dataset /peaks/background dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+dataset /peaks/chisq dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+dataset /peaks/fit_x dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+dataset /peaks/fit_y dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+dataset /peaks/hwhm_x dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+dataset /peaks/hwhm_y dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+dataset /peaks/integral dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+dataset /peaks/intens dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+dataset /peaks/qhat dtype=<f4 shape=(96, 3) maxshape=('unlimited', 3) chunks=(4096, 3)
+dataset /peaks/tilt dtype=<f4 shape=(96,) maxshape=('unlimited',) chunks=(4096,)
+  @units
+group /run
+  @angle_tolerance_deg
+  @boxsize
+  @cone_deg
+  @cosmic_filter
+  @detector_id
+  @detector_index
+  @hkl_prefer
+  @kev_max_calc
+  @kev_max_test
+  @max_data
+  @max_peaks
+  @max_rfactor
+  @min_separation
+  @min_size
+  @peak_shape
+  @program
+  @smooth
+  @threshold
+  @threshold_ratio

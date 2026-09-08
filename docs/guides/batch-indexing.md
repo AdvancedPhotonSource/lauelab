@@ -61,19 +61,27 @@ Choose the caught exceptions deliberately. For example, an application may stop 
 
 ## Parallelism boundaries
 
-`index_many()` is sequential. The public API does not promise thread safety or built-in process parallelism. If an application adds process-level parallelism, each worker should construct and own its `Indexer` until stronger sharing guarantees are documented.
+`index_many()` is sequential. The public API does not promise thread safety or built-in process parallelism. If an application adds process-level parallelism, each worker should construct and own its `Indexer` until stronger sharing guarantees are documented. `Indexer` is not picklable; `FrameResult` is, so workers can return results to the parent process. {ref}`Write from a process pool <results-file-process-pool>` shows that pattern with a streaming writer.
 
 Measure process count and memory use with representative detector frames before using parallel execution in production.
 
 ## Write combined output
 
-Write successful results to one LaueGo XML document:
+Write successful results to one results file:
+
+```python
+indexer.write_results(results, "indexed-scan.h5")
+```
+
+Results are written in iteration order, and an existing destination raises `FileExistsError` unless you pass `overwrite=True`. For a scan too large to hold in memory, `indexer.results_writer()` appends each result as it is produced; see [Results files](results-file.md).
+
+Write a LaueGo XML document when other software requires that format:
 
 ```python
 indexer.write_many_xml(results, "indexed-scan.xml")
 ```
 
-Results are written in iteration order. The destination is replaced if it exists. A result constructed manually without an XML snapshot raises `RuntimeError`.
+The XML destination is replaced if it exists. A result constructed manually without an XML snapshot raises `RuntimeError`.
 
 ## Measure performance
 

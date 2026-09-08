@@ -4,6 +4,7 @@ The visualization API normalizes indexing output before it prepares a specific v
 
 ```text
 FrameResult sequence -> ResultSet -> VisualizationDataset
+results file --------------------> VisualizationDataset
 LaueGo XML ----------------------> VisualizationDataset
 
 VisualizationDataset -> prepare_*() -> immutable NumPy data
@@ -45,9 +46,22 @@ result = indexer.index(
 
 Call `result_set.to_visualization()` when you need the normalized arrays. This conversion copies result arrays into one read-only columnar snapshot. It also copies retained images. Later changes to a `FrameResult` do not change the snapshot. Preparation and table functions also accept `ResultSet` directly and perform this conversion for each call.
 
+## Load a results file
+
+{func}`~lauelab.visualization.load_results` reads a results file written by `Indexer.write_results()` into the same normalized model:
+
+```python
+from lauelab.visualization import load_results, prepare_map
+
+dataset = load_results("results.h5")
+map_data = prepare_map(dataset, axes=("X", "H"), color="n_indexed")
+```
+
+The file stores the crystal and the geometry, so maps, pole figures, tables, and detector views need no other input. Pass `geometry` to use a different geometry file and `frame_ids` to replace the recorded identifiers. Plotly figures require integer frame IDs within the browser's safe range, `±(2**53 - 1)`; larger IDs raise `ValueError` when plotting, so supply string IDs instead. See [Results files](results-file.md) for the file contents and XML conversion.
+
 ## Load LaueGo XML
 
-{func}`~lauelab.visualization.load_visualization_xml` reads an `AllSteps` indexing XML document into the same normalized model:
+{func}`~lauelab.visualization.load_visualization_xml` reads an `AllSteps` indexing XML document into the same normalized model. Loading parses every element, so a large document takes tens of seconds; convert it once with {func}`~lauelab.visualization.convert_xml` when it will be loaded more than once.
 
 ```python
 from lauelab.visualization import load_visualization_xml, prepare_map
@@ -106,7 +120,7 @@ map_data = prepare_map(
 )
 ```
 
-`map_data.coordinates` has shape `(n, 2)` or `(n, 3)`. Scalar colors have shape `(n,)`. IPF and Rodrigues colors have shape `(n, 3)` with RGB values between 0 and 1.
+`map_data.coordinates` has shape `(n, 2)` or `(n, 3)`. Scalar colors have shape `(n,)`. IPF and Rodrigues colors have shape `(n, 3)` with RGB values between 0 and 1. The Plotly renderers pass RGB colors as `#rrggbb` strings, one per point.
 
 Use {class}`~lauelab.visualization.Axis` and {class}`~lauelab.visualization.ScalarColor` for aligned custom values:
 
@@ -210,7 +224,7 @@ Map, pole, and detector traces store stable identities in the first three `custo
 [frame_id, pattern_index, peak_index]
 ```
 
-A value is `None` when the trace does not represent that identity type. Use {func}`~lauelab.visualization.selection_from_plotly` with Plotly `clickData` or `selectedData`:
+A value is `None` when the trace does not represent that identity type. Map and pole-figure traces with integer frame IDs store the rows as one floating-point array, where a missing value is `NaN` in the figure and `null` in browser events; detector traces and string frame IDs use a list per point. {func}`~lauelab.visualization.selection_from_plotly` accepts both forms from Plotly `clickData` or `selectedData`:
 
 ```python
 selection = selection_from_plotly(event_data)

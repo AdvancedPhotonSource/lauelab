@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from numbers import Integral
 
 import numpy as np
 import plotly.graph_objects as go
@@ -57,24 +58,56 @@ def _value_or_default(value):
     return value.value if isinstance(value, _PreparationDefault) else value
 
 
+_MISSING_COLOR = "#969696"
+
+
 def _rgb(values):
+    """Return one ``#rrggbb`` string per row; non-finite rows become gray.
+
+    Hex strings are shorter than ``rgb(r,g,b)`` and cheaper for Plotly to
+    validate, which matters for traces with 10^5 per-point colors.
+    """
     array = np.asarray(values, dtype=float)
     if array.shape == (3,):
         array = array.reshape(1, 3)
-    colors = []
-    for value in array:
-        if np.isfinite(value).all():
-            red, green, blue = np.clip(np.rint(value * 255), 0, 255).astype(int)
-            colors.append(f"rgb({red},{green},{blue})")
-        else:
-            colors.append("rgb(150,150,150)")
+    finite = np.isfinite(array).all(axis=1)
+    quantized = np.zeros(array.shape, dtype=int)
+    quantized[finite] = np.clip(np.rint(array[finite] * 255), 0, 255).astype(int)
+    colors = [f"#{red:02x}{green:02x}{blue:02x}" for red, green, blue in quantized.tolist()]
+    for index in np.flatnonzero(~finite):
+        colors[index] = _MISSING_COLOR
     return colors
 
 
-def _customdata(frame_ids, pattern_indices=None, peak_indices=None):
+def _customdata(frame_ids, pattern_indices=None, peak_indices=None, *, array=True):
+    """Return ``[frame_id, pattern_index, peak_index]`` identity rows.
+
+    With integer frame IDs and ``array=True`` the rows form one floating-point
+    array (``float32`` when every value is below 2**24, else ``float64``),
+    which Plotly serializes as binary and the browser reads as numbers; a
+    missing identity is ``NaN`` there and ``None`` in the list form. String
+    frame IDs always use the list form.
+    """
     count = len(frame_ids)
+    if any(isinstance(value, Integral) and abs(int(value)) > 2**53 - 1 for value in frame_ids):
+        raise ValueError("Plotly integer frame IDs must be within ±(2**53 - 1); use string frame IDs for larger values")
     patterns = [None] * count if pattern_indices is None else pattern_indices
     peaks = [None] * count if peak_indices is None else peak_indices
+    numeric = array and count and all(
+        isinstance(value, Integral) and not isinstance(value, (bool, np.bool_))
+        for value in frame_ids
+    )
+    if numeric:
+        rows = np.full((count, 3), np.nan)
+        rows[:, 0] = frame_ids
+        if pattern_indices is not None:
+            rows[:, 1] = pattern_indices
+        if peak_indices is not None:
+            rows[:, 2] = peak_indices
+        # float32 is exact for integers below 2**24 and halves the payload.
+        if np.nanmax(np.abs(rows)) < 2**24:
+            rows = rows.astype(np.float32)
+        return rows
     return [
         [frame_id, None if pattern is None else int(pattern), None if peak is None else int(peak)]
         for frame_id, pattern, peak in zip(frame_ids, patterns, peaks, strict=True)
@@ -475,6 +508,7 @@ def plot_detector_view(
             customdata=_customdata(
                 [data.frame_id] * len(data.measured_xy),
                 peak_indices=data.measured_peak_indices,
+                array=False,
             ),
             hovertemplate=(
                 "frame: %{customdata[0]}<br>peak: %{customdata[2]}<br>"
@@ -511,6 +545,7 @@ def plot_detector_view(
                     [data.frame_id] * len(selected),
                     [pattern.pattern_index] * len(selected),
                     peaks[mask],
+                    array=False,
                 )
                 customdata = [
                     identity + [int(value) for value in reflection]
@@ -552,6 +587,7 @@ def plot_detector_view(
             stable = _customdata(
                 [data.frame_id] * len(simulation.predicted_xy),
                 [simulation.pattern_index] * len(simulation.predicted_xy),
+                array=False,
             )
             customdata = [
                 identity

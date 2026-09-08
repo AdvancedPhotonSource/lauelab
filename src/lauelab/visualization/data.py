@@ -35,9 +35,17 @@ def _validate_frame_ids(values: Sequence[FrameId], count: int) -> tuple[FrameId,
     ids = tuple(values)
     if len(ids) != count:
         raise ValueError(f"frame_ids must contain {count} values")
-    if any(isinstance(value, (bool, np.bool_)) or not isinstance(value, (str, Integral)) for value in ids):
+    # Check each distinct type once: an ABC isinstance per ID costs seconds
+    # on a 10^5-frame scan, and a scan has one or two ID types.
+    kinds = {type(value) for value in ids}
+    if any(
+        issubclass(kind, (bool, np.bool_)) or not issubclass(kind, (str, Integral))
+        for kind in kinds
+    ):
         raise TypeError("frame IDs must be strings or integers")
-    ids = tuple(int(value) if isinstance(value, Integral) else value for value in ids)
+    integer_kinds = {kind for kind in kinds if issubclass(kind, Integral)}
+    if integer_kinds:
+        ids = tuple(int(value) if type(value) in integer_kinds else value for value in ids)
     try:
         unique = set(ids)
     except TypeError as error:
@@ -96,11 +104,17 @@ class DataScope:
         count = len(dataset.pattern_indices)
         selected = np.ones(count, dtype=bool)
         if self.patterns == "best":
+            # Order rows by frame, then rank, then original position, so the
+            # first row of each frame is its lowest rank at its earliest
+            # occurrence.
+            order = np.lexsort((
+                np.arange(count), dataset.pattern_indices, dataset.pattern_frame_indices
+            ))
+            frames = dataset.pattern_frame_indices[order]
+            first = np.ones(count, dtype=bool)
+            first[1:] = frames[1:] != frames[:-1]
             selected[:] = False
-            for frame_index in np.unique(dataset.pattern_frame_indices):
-                rows = np.flatnonzero(dataset.pattern_frame_indices == frame_index)
-                if len(rows):
-                    selected[rows[np.argmin(dataset.pattern_indices[rows])]] = True
+            selected[order[first]] = True
         elif self.patterns not in ("all", "all_frames"):
             selected &= np.isin(dataset.pattern_indices, self.patterns)
         selected &= dataset.pattern_n_indexed >= self.min_indexed

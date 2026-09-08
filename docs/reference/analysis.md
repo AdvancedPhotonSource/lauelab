@@ -8,7 +8,7 @@ See the [results guide](../guides/results.md) for the reciprocal-basis conventio
 
 An orientation matrix maps vectors from the reference crystal basis to the measured basis. {func}`~lauelab.analysis.reciprocal_to_orientation` calculates that matrix as `measured.T @ inv(reference.T)`. {func}`~lauelab.analysis.crystal_direction` applies the inverse orientation to a laboratory-frame direction.
 
-Rotation matrices have shape `(3, 3)` and are dimensionless. Rodrigues vectors use the dimensionless $\hat{a}\tan(\theta/2)$ convention. At the 180-degree singularity, {func}`~lauelab.analysis.orientation_to_rodrigues` clamps the effective angle to $\pi - 10^{-7}$ radians while retaining a deterministic rotation axis. Misorientation angles use degrees.
+Rotation matrices have shape `(3, 3)` and are dimensionless. {func}`~lauelab.analysis.orientation_to_rodrigues`, {func}`~lauelab.analysis.symmetry_reduce_orientation`, {func}`~lauelab.analysis.misorientation_matrix`, and {func}`~lauelab.analysis.crystal_direction` also accept a stack with shape `(..., 3, 3)` and return results with the matching leading shape. Rodrigues vectors use the dimensionless $\hat{a}\tan(\theta/2)$ convention. At the 180-degree singularity, {func}`~lauelab.analysis.orientation_to_rodrigues` clamps the effective angle to $\pi - 10^{-7}$ radians while retaining a deterministic rotation axis. Misorientation angles use degrees.
 
 ## Lattice and orientation
 

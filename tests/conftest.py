@@ -24,6 +24,19 @@ TWIN2_SKIP_REASON = "Twin2 wire-scan fixture not available"
 ALLOWED_SKIP_REASONS = (GPU_SKIP_REASON, TWIN2_SKIP_REASON)
 
 
+@pytest.fixture
+def frozen_results_clock(monkeypatch):
+    from datetime import datetime
+    import lauelab._hdf5 as hdf5
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 4, tzinfo=tz)
+
+    monkeypatch.setattr(hdf5, "datetime", FrozenDatetime)
+
+
 def native_file_available(package: str, name: str) -> bool:
     try:
         return (resources.files(package) / name).is_file()
@@ -45,6 +58,12 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="fail the session if liblaue.so is missing or if any test skips for a reason not in the allowed list",
+    )
+    parser.addoption(
+        "--regenerate-results-schema",
+        action="store_true",
+        default=False,
+        help="rewrite tests/data/results/layout_synthetic.txt from the current writer before comparing",
     )
 
 

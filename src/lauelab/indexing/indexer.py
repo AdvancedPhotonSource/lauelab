@@ -935,6 +935,37 @@ class Indexer:
         values.update(changes)
         return type(self)(**values)
 
+    def results_writer(self, path: str | Path, **kwargs):
+        """Create a streaming HDF5 writer bound to this indexer's configuration."""
+        from .results import ResultsWriter
+
+        return ResultsWriter(
+            path,
+            crystal=self.crystal,
+            geometry=self.geometry,
+            peak_params=self.peak_params,
+            index_params=self.index_params,
+            detector_index=self.detector_index,
+            detector_id=self.detector_id,
+            cosmic_filter=self.cosmic_filter,
+            **kwargs,
+        )
+
+    def write_results(
+        self,
+        results: Iterable[FrameResult],
+        path: str | Path,
+        *,
+        frame_ids=None,
+        overwrite: bool = False,
+    ) -> None:
+        """Write an iterable of results to one indexing-results HDF5 file."""
+        from .results import write_results
+
+        write_results(
+            self, results, path, frame_ids=frame_ids, overwrite=overwrite
+        )
+
     def write_many_xml(self, results: Iterable[FrameResult], path: str | Path) -> None:
         """Write multiple results to one LaueGo XML document.
 

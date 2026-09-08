@@ -45,6 +45,7 @@ intensity = result.peaks["intens"]
 
 A frame coordinate `(x, y)` corresponds to NumPy access `image[y, x]`. Fitted coordinates are floating-point values and can lie between pixel centers.
 
+(results-patterns)=
 ## Patterns
 
 Each {class}`~lauelab.indexing.Pattern` represents one orientation returned by the native indexer.
@@ -119,9 +120,20 @@ The result records:
 
 The `FrameResult` dataclass is frozen, but its arrays and metadata mapping can remain mutable. Copy them before modification when the unchanged result must remain available.
 
+## Write a results file
+
+Write the results of a run to one HDF5 file with `Indexer.write_results()`:
+
+```python
+indexer.write_results(results, "results.h5")
+```
+
+The file stores every result field except the retained image and loads directly into the visualization functions. See [Results files](results-file.md) for streaming output, process pools, loading, and XML conversion.
+
+(results-write-xml)=
 ## Write XML
 
-Write one result in the established Laue XML format:
+Write one result in the LaueGo XML format when other software must read that format:
 
 ```python
 result.write_xml("indexed-frame.xml")

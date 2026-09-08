@@ -88,57 +88,79 @@ def lattice_params_to_reciprocal(
 
 
 def reciprocal_to_orientation(reciprocal, reference_reciprocal):
-    """Return the orientation matrix for measured and reference lattices."""
+    """Return the orientation matrix for measured and reference lattices.
+
+    ``reciprocal`` may be one ``(3, 3)`` matrix or a stack with shape
+    ``(..., 3, 3)``; ``reference_reciprocal`` is one matrix. The result has
+    the shape of ``reciprocal``.
+    """
     measured = np.asarray(reciprocal, dtype=float)
     reference = np.asarray(reference_reciprocal, dtype=float)
-    if measured.shape != (3, 3) or reference.shape != (3, 3):
-        raise ValueError("reciprocal lattices must have shape (3, 3)")
-    return measured.T @ np.linalg.inv(reference.T)
+    if measured.shape[-2:] != (3, 3) or reference.shape != (3, 3):
+        raise ValueError("reciprocal lattices must have shape (..., 3, 3) and (3, 3)")
+    return np.swapaxes(measured, -1, -2) @ np.linalg.inv(reference.T)
 
 
 def orientation_to_rodrigues(rotation):
-    """Convert a 3 by 3 rotation matrix to ``axis * tan(angle / 2)``.
+    """Convert rotation matrices to ``axis * tan(angle / 2)``.
+
+    ``rotation`` may be one ``(3, 3)`` matrix or a stack with shape
+    ``(..., 3, 3)``; the result has shape ``(3,)`` or ``(..., 3)``.
 
     The Rodrigues magnitude is singular at 180 degrees. Near that singularity,
     the axis is recovered from the rotation eigenvectors and the effective angle
     is clamped to ``pi - 1e-7`` radians, with the first nonzero axis component
     chosen positive. Unlike the Laue Portal's zero-vector fallback, this retains
-    a deterministic axis and decodes to approximately 180 degrees.
+    a deterministic axis and decodes to approximately 180 degrees. A matrix
+    with a non-finite entry maps to a vector of ``NaN``.
     """
     rotation = np.asarray(rotation, dtype=float)
-    if rotation.shape != (3, 3):
-        raise ValueError("rotation must have shape (3, 3)")
-    angle = np.arccos(np.clip((np.trace(rotation) - 1.0) / 2.0, -1.0, 1.0))
-    if angle < 1e-12:
-        return np.zeros(3)
-    axis = np.array([
-        rotation[2, 1] - rotation[1, 2],
-        rotation[0, 2] - rotation[2, 0],
-        rotation[1, 0] - rotation[0, 1],
-    ])
-    norm = np.linalg.norm(axis)
-    if norm < 1e-8:
-        values, vectors = np.linalg.eigh(rotation + np.eye(3))
-        axis = vectors[:, np.argmax(values)]
-        first = np.flatnonzero(np.abs(axis) > 1e-12)
-        if first.size and axis[first[0]] < 0:
-            axis = -axis
-        return axis * np.tan((np.pi - 1e-7) / 2.0)
-    axis /= norm
-    return axis * np.tan(angle / 2.0)
+    if rotation.shape[-2:] != (3, 3):
+        raise ValueError("rotation must have shape (..., 3, 3)")
+    stack = rotation.reshape((-1, 3, 3))
+    result = np.full((len(stack), 3), np.nan)
+    finite = np.isfinite(stack).all(axis=(1, 2))
+    trace = np.trace(stack, axis1=1, axis2=2)
+    angle = np.arccos(np.clip((trace - 1.0) / 2.0, -1.0, 1.0))
+    axis = np.stack([
+        stack[:, 2, 1] - stack[:, 1, 2],
+        stack[:, 0, 2] - stack[:, 2, 0],
+        stack[:, 1, 0] - stack[:, 0, 1],
+    ], axis=1)
+    norm = np.linalg.norm(axis, axis=1)
+    identity = finite & (angle < 1e-12)
+    generic = finite & ~identity & (norm >= 1e-8)
+    result[identity] = 0.0
+    result[generic] = (
+        axis[generic] / norm[generic, None] * np.tan(angle[generic] / 2.0)[:, None]
+    )
+    for index in np.flatnonzero(finite & ~identity & (norm < 1e-8)):
+        values, vectors = np.linalg.eigh(stack[index] + np.eye(3))
+        near_axis = vectors[:, np.argmax(values)]
+        first = np.flatnonzero(np.abs(near_axis) > 1e-12)
+        if first.size and near_axis[first[0]] < 0:
+            near_axis = -near_axis
+        result[index] = near_axis * np.tan((np.pi - 1e-7) / 2.0)
+    return result.reshape(rotation.shape[:-2] + (3,))
 
 
 def crystal_direction(rotation, lab_direction):
-    """Express a lab-frame direction in crystal coordinates."""
+    """Express a lab-frame direction in crystal coordinates.
+
+    ``rotation`` may be one ``(3, 3)`` matrix or a stack with shape
+    ``(..., 3, 3)``; the result has the matching shape ``(..., 3)``. Every
+    matrix in a stack is solved at once, so a singular matrix anywhere in
+    the stack raises ``numpy.linalg.LinAlgError``.
+    """
     rotation = np.asarray(rotation, dtype=float)
     direction = np.asarray(lab_direction, dtype=float)
-    if rotation.shape != (3, 3) or direction.shape != (3,):
-        raise ValueError("rotation and lab_direction must have shapes (3, 3) and (3,)")
+    if rotation.shape[-2:] != (3, 3) or direction.shape != (3,):
+        raise ValueError("rotation and lab_direction must have shapes (..., 3, 3) and (3,)")
     norm = np.linalg.norm(direction)
     if not np.isfinite(norm) or norm == 0:
         raise ValueError("lab_direction must be a finite nonzero vector")
     result = np.linalg.solve(rotation, direction / norm)
-    return result / np.linalg.norm(result)
+    return result / np.linalg.norm(result, axis=-1, keepdims=True)
 
 
 def _rotation_matrix(axis, angle_deg):
@@ -192,21 +214,47 @@ def symmetry_operations(symmetry: str | int) -> np.ndarray:
     raise ValueError("symmetry must be 'cubic', 'hexagonal', or a supported space group")
 
 
+def _select_by_trace(rotations, right_factors):
+    """Return ``rotations[n] @ right_factors[o]`` for the ``o`` maximizing the trace.
+
+    ``trace(R @ M)`` equals ``sum(R * M.T)``, so the argmax is found without
+    forming every candidate product; only the chosen products are formed.
+    """
+    traces = np.einsum("nij,oji->no", rotations, right_factors)
+    best = np.argmax(traces, axis=1)
+    return np.einsum("nij,njk->nik", rotations, right_factors[best])
+
+
 def symmetry_reduce_orientation(rotation, *, operations=None):
-    """Return the symmetry-equivalent orientation nearest to identity."""
+    """Return the symmetry-equivalent orientation nearest to identity.
+
+    ``rotation`` may be one ``(3, 3)`` matrix or a stack with shape
+    ``(..., 3, 3)``; the result has the same shape.
+    """
     rotation = np.asarray(rotation, dtype=float)
+    if rotation.shape[-2:] != (3, 3):
+        raise ValueError("rotation must have shape (..., 3, 3)")
     operations = np.eye(3)[None, ...] if operations is None else np.asarray(operations, dtype=float)
-    candidates = rotation @ np.swapaxes(operations, 1, 2)
-    return candidates[np.argmax(np.trace(candidates, axis1=1, axis2=2))]
+    stack = rotation.reshape((-1, 3, 3))
+    reduced = _select_by_trace(stack, np.swapaxes(operations, 1, 2))
+    return reduced.reshape(rotation.shape)
 
 
 def misorientation_matrix(rotation_a, rotation_b, *, operations=None):
-    """Return the minimum-angle misorientation from ``rotation_b`` to ``rotation_a``."""
+    """Return the minimum-angle misorientation from ``rotation_b`` to ``rotation_a``.
+
+    ``rotation_a`` may be one ``(3, 3)`` matrix or a stack with shape
+    ``(..., 3, 3)``; ``rotation_b`` is one matrix. The result has the shape
+    of ``rotation_a``.
+    """
     a = np.asarray(rotation_a, dtype=float)
+    if a.shape[-2:] != (3, 3):
+        raise ValueError("rotation_a must have shape (..., 3, 3)")
     b_inv = np.linalg.inv(np.asarray(rotation_b, dtype=float))
     operations = np.eye(3)[None, ...] if operations is None else np.asarray(operations, dtype=float)
-    candidates = a @ (np.swapaxes(operations, 1, 2) @ b_inv)
-    return candidates[np.argmax(np.trace(candidates, axis1=1, axis2=2))]
+    stack = a.reshape((-1, 3, 3))
+    relative = _select_by_trace(stack, np.swapaxes(operations, 1, 2) @ b_inv)
+    return relative.reshape(a.shape)
 
 
 def misorientation_angle(rotation_a, rotation_b, *, operations=None):
@@ -224,16 +272,10 @@ def misorientation_from_reference(rotations, reference_index, *, operations=None
     if not 0 <= reference_index < len(rotations):
         raise IndexError("reference_index is out of range")
     reference = rotations[reference_index]
-    reduced = np.asarray([
-        misorientation_matrix(rotation, reference, operations=operations)
-        for rotation in rotations
-    ])
-    vectors = np.asarray([orientation_to_rodrigues(rotation) for rotation in reduced])
-    angles = np.asarray([
-        np.degrees(np.arccos(np.clip((np.trace(rotation) - 1.0) / 2.0, -1.0, 1.0)))
-        for rotation in reduced
-    ])
-    return vectors, angles
+    reduced = misorientation_matrix(rotations, reference, operations=operations)
+    vectors = orientation_to_rodrigues(reduced)
+    cosines = np.clip((np.trace(reduced, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
+    return vectors, np.degrees(np.arccos(cosines))
 
 
 def pairwise_misorientation(rotations, *, indices=None, operations=None):

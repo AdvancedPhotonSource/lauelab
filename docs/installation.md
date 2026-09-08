@@ -8,6 +8,7 @@ Pip can create a temporary wheel while it installs the source tree. This is part
 
 - Linux x86-64 with GCC.
 - Python 3.11, 3.12, or 3.13. The maintained environment uses Python 3.12.
+- NumPy 2.0 or later.
 
 macOS, Windows, Linux ARM, and Clang are not supported.
 

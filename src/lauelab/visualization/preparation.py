@@ -329,15 +329,32 @@ def _resolve_axis(axis, dataset, rows):
     return values, label
 
 
+def _finite_rows(rotations, function):
+    """Apply ``function`` to the finite ``(n, 3, 3)`` rows; other rows give NaN vectors."""
+    rotations = np.asarray(rotations, dtype=float).reshape((-1, 3, 3))
+    vectors = np.full((len(rotations), 3), np.nan)
+    finite = np.isfinite(rotations).all(axis=(1, 2))
+    if np.any(finite):
+        vectors[finite] = function(rotations[finite])
+    return vectors
+
+
 def _crystal_directions(rotations, normal):
+    rotations = np.asarray(rotations, dtype=float).reshape((-1, 3, 3))
     directions = np.full((len(rotations), 3), np.nan)
-    for index, rotation in enumerate(rotations):
-        if not np.isfinite(rotation).all():
-            continue
-        try:
-            directions[index] = crystal_direction(rotation, normal)
-        except (ValueError, np.linalg.LinAlgError):
-            pass
+    finite = np.isfinite(rotations).all(axis=(1, 2))
+    if not np.any(finite):
+        return directions
+    try:
+        directions[finite] = crystal_direction(rotations[finite], normal)
+    except np.linalg.LinAlgError:
+        # A singular matrix somewhere in the stack: keep NaN for those rows
+        # and solve the rest one at a time.
+        for index in np.flatnonzero(finite):
+            try:
+                directions[index] = crystal_direction(rotations[index], normal)
+            except np.linalg.LinAlgError:
+                pass
     return directions
 
 
@@ -391,15 +408,12 @@ def _map_colors(
             if dataset.crystal and dataset.crystal.crystal_system in ("cubic", "hexagonal")
             else None
         )
-        reduced = [
-            symmetry_reduce_orientation(rotation, operations=operations)
-            if np.isfinite(rotation).all() else np.full((3, 3), np.nan)
-            for rotation in rotations
-        ]
-        vectors = np.asarray([
-            orientation_to_rodrigues(rotation) if np.isfinite(rotation).all() else [np.nan] * 3
-            for rotation in reduced
-        ], dtype=float).reshape((-1, 3))
+        vectors = _finite_rows(
+            rotations,
+            lambda finite: orientation_to_rodrigues(
+                symmetry_reduce_orientation(finite, operations=operations)
+            ),
+        )
         return rodrigues_colors(vectors), "rgb", "Rodrigues RGB", None, None
     if color == "misorientation":
         if misorientation_reference is None:
@@ -420,15 +434,12 @@ def _map_colors(
             if dataset.crystal and dataset.crystal.crystal_system in ("cubic", "hexagonal")
             else None
         )
-        relative = [
-            misorientation_matrix(rotation, reference, operations=operations)
-            if np.isfinite(rotation).all() else np.full((3, 3), np.nan)
-            for rotation in rotations
-        ]
-        vectors = np.asarray([
-            orientation_to_rodrigues(rotation) if np.isfinite(rotation).all() else [np.nan] * 3
-            for rotation in relative
-        ], dtype=float).reshape((-1, 3))
+        vectors = _finite_rows(
+            rotations,
+            lambda finite: orientation_to_rodrigues(
+                misorientation_matrix(finite, reference, operations=operations)
+            ),
+        )
         return rodrigues_colors(vectors), "rgb", "Misorientation", None, None
     if color == "pole_hsv":
         if dataset.crystal is None or dataset.crystal.crystal_system != "cubic":

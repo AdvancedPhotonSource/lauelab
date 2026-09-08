@@ -16,6 +16,7 @@ from .index import IndexingResult, lauego
 from .indexer import (
     FrameMetadata, FrameResult, Indexer, IndexParams, Pattern, PeakParams, index_frame,
 )
+from .results import ResultsWriter
 
 __all__ = [
     'lauego',
@@ -39,4 +40,5 @@ __all__ = [
     'Pattern',
     'FrameMetadata',
     'FrameResult',
+    'ResultsWriter',
 ]

@@ -1,17 +1,24 @@
 # Copyright © 2026 UChicago Argonne, LLC. All rights reserved.
 # Full license accessible at https://github.com/AdvancedPhotonSource/lauelab/blob/main/LICENSE
+from dataclasses import fields
 from pathlib import Path
+import time
 
+import h5py
 import numpy as np
 import pytest
 
 from conftest import requires_liblaue
 
+from lauelab import is_results_file
 from lauelab.indexing import Atom, Cell, Crystal, FrameResult, Geometry, Pattern
 from lauelab.indexing._liblaue import NativeCrystal
 from lauelab.visualization import (
     DataScope,
     ResultSet,
+    VisualizationDataset,
+    convert_xml,
+    load_results,
     load_visualization_xml,
     prepare_map,
 )
@@ -285,3 +292,107 @@ def test_load_visualization_xml_validates_frame_ids(legacy_xml):
     )
     assert dataset.frame_ids == (10, 20)
     assert all(type(value) is int for value in dataset.frame_ids)
+
+
+def _assert_converted_equal(actual, expected):
+    assert actual.frame_ids == expected.frame_ids
+    assert actual.detector_ids == expected.detector_ids
+    assert actual.input_images == expected.input_images
+    for item in fields(VisualizationDataset):
+        if item.name in {"frame_ids", "detector_ids", "input_images", "images", "crystal", "geometry"}:
+            continue
+        actual_value = getattr(actual, item.name)
+        expected_value = getattr(expected, item.name)
+        if item.name == "peaks":
+            for field_name in actual_value.dtype.names:
+                np.testing.assert_allclose(
+                    actual_value[field_name], expected_value[field_name],
+                    rtol=2e-6, atol=2e-6, equal_nan=True,
+                )
+        else:
+            np.testing.assert_allclose(
+                actual_value, expected_value,
+                rtol=2e-6, atol=2e-6, equal_nan=True,
+            )
+    assert actual.crystal == expected.crystal
+
+
+def test_convert_xml_round_trips_normalized_arrays_and_refuses_overwrite(legacy_xml):
+    expected = load_visualization_xml(legacy_xml)
+    output = convert_xml(legacy_xml)
+
+    assert output == legacy_xml.with_suffix(".h5")
+    assert is_results_file(output)
+    _assert_converted_equal(load_results(output), expected)
+    with pytest.raises(FileExistsError):
+        convert_xml(legacy_xml)
+    assert convert_xml(legacy_xml, overwrite=True) == output
+
+
+def test_convert_xml_records_unresolved_geometry_and_allows_missing_crystal(tmp_path):
+    path = tmp_path / "minimal.xml"
+    path.write_text(
+        """<AllSteps><step><detector><geoFile>missing/geometry.xml</geoFile>
+        <Nx>2</Nx><Ny>3</Ny></detector></step></AllSteps>"""
+    )
+
+    output = convert_xml(path)
+    loaded = load_results(output)
+
+    assert loaded.crystal is None
+    assert loaded.geometry is None
+    with h5py.File(output) as source:
+        assert source["geometry"].attrs["path"] == "missing/geometry.xml"
+        assert "xml" not in source["geometry"]
+        assert "crystal" not in source
+
+
+def test_conversion_is_byte_stable_at_fixed_timestamp(legacy_xml, frozen_results_clock):
+    first = convert_xml(legacy_xml, legacy_xml.with_name("first.h5"))
+    time.sleep(1.1)
+    second = convert_xml(legacy_xml, legacy_xml.with_name("second.h5"))
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_conversion_rejects_conflicting_run_parameters_before_overwriting(tmp_path):
+    xml_path = tmp_path / "mixed.xml"
+    xml_path.write_text('''<AllSteps>
+        <step><indexing cone="72" /></step>
+        <step><indexing cone="60" /></step>
+        </AllSteps>''')
+    output = tmp_path / "existing.h5"
+    output.write_bytes(b"keep existing output")
+    with pytest.raises(ValueError, match="conflicting run parameter 'cone_deg'"):
+        convert_xml(xml_path, output, overwrite=True)
+    assert output.read_bytes() == b"keep existing output"
+
+
+def test_conversion_collects_parameters_from_later_steps_and_old_attribute_names(tmp_path):
+    xml_path = tmp_path / "parameters.xml"
+    xml_path.write_text('''<AllSteps>
+        <step><detector><cosmicFilter>None</cosmicFilter>
+        <peaksXY maxRfactor="None" max_number="None" peakProgram="None" />
+        </detector><indexing cone="None" hklPrefer="None" keVmaxTest="nan" /></step>
+        <step><detector><cosmicFilter>False</cosmicFilter>
+        <peaksXY max_number="50" min_separation="10" maskFile="mask.h5" />
+        </detector><indexing indexProgram="euler" cone="72" /></step>
+        </AllSteps>''')
+    with h5py.File(convert_xml(xml_path)) as source:
+        run = source["run"].attrs
+        assert run["program"] == "euler"
+        assert run["cone_deg"] == 72
+        assert not bool(run["cosmic_filter"])
+        assert run["max_peaks"] == 50 and run["min_separation"] == 10
+        assert run["mask_file"] == "mask.h5"
+        assert "max_rfactor" not in run and "hkl_prefer" not in run
+        assert "kev_max_test" not in run and "peak_program" not in run
+
+
+def test_is_results_file_rejects_frame_hdf5_and_non_hdf5(tmp_path):
+    frame = tmp_path / "frame.h5"
+    with h5py.File(frame, "w") as target:
+        target.create_dataset("entry1/data/data", data=np.zeros((2, 2)))
+
+    assert not is_results_file(frame)
+    assert not is_results_file(tmp_path / "missing.h5")
+    assert not is_results_file(__file__)

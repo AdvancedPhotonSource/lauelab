@@ -1,6 +1,6 @@
 # lauelab
 
-`lauelab` provides Python interfaces for processing Laue diffraction data at APS beamline 34-ID-E. It indexes crystal orientations, reconstructs wire scans into depth-resolved images, predicts detector reflections, and prepares maps, pole figures, detector overlays, and tables. Visualization functions accept current indexing results or LaueGo XML.
+`lauelab` provides Python interfaces for processing Laue diffraction data at APS beamline 34-ID-E. It indexes crystal orientations, reconstructs wire scans into depth-resolved images, predicts detector reflections, and prepares maps, pole figures, detector overlays, and tables. Visualization functions accept current indexing results, results files, or LaueGo XML.
 
 ```{note}
 `lauelab` is alpha software under active development. The documented indexing, reconstruction, and visualization APIs are the supported interfaces, but behavior can change before a stable release. The current source build targets Linux and requires native C build tools and scientific libraries.

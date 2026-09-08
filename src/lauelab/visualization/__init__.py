@@ -25,6 +25,7 @@ from .preparation import (
     prepare_pole_figure,
 )
 from .rendering import plot_detector_view, plot_map, plot_pole_figure
+from .results import convert_xml, load_results
 from .tables import Table, assignment_table, indexed_peak_table, pattern_table, peak_table
 from .xml import load_visualization_xml
 
@@ -48,7 +49,9 @@ __all__ = [
     "Table",
     "VisualizationDataset",
     "assignment_table",
+    "convert_xml",
     "indexed_peak_table",
+    "load_results",
     "load_visualization_xml",
     "pattern_table",
     "peak_table",

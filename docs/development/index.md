@@ -117,3 +117,14 @@ The workflow does not publish or keep build artifacts.
 ## Publish the site
 
 `.github/workflows/docs.yml` builds the documentation for every pull request and deploys it to GitHub Pages after a successful push to `main`. The repository settings must select "GitHub Actions" as the Pages source. Do not commit `docs/_build/`.
+
+## HDF5 file conventions
+
+Files whose layout `lauelab` defines follow one set of conventions for root attributes, versioning, units, and ragged data. See [HDF5 file conventions](hdf5-conventions.md).
+
+```{toctree}
+:hidden:
+:maxdepth: 1
+
+hdf5-conventions
+```
