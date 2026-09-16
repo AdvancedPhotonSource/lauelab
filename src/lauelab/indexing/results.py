@@ -4,21 +4,22 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from numbers import Integral
 from pathlib import Path
-from typing import Iterable
+from typing import Hashable, Iterable
 
 import h5py
 import numpy as np
 
-from lauelab._hdf5 import write_root_attributes
+from lauelab._hdf5 import check_format_version, write_root_attributes
 from lauelab._results_layout import (
-    DATASETS, FORMAT, FRAME_IDS_STRING_SPEC, VERSION,
+    DATASETS, FORMAT, FRAME_IDS_STRING_SPEC, SUPPORTED_VERSIONS, VERSION,
     set_attributes, write_crystal, write_dataset,
 )
 
 from .crystal import Crystal
+from .errors import InvalidResultsFile
 from .indexer import FrameResult, IndexParams, PeakParams
 
 _METADATA_STRINGS = {
@@ -33,7 +34,19 @@ _METADATA_STRINGS = {
 
 
 class ResultsWriter:
-    """Write indexing results incrementally to one HDF5 file."""
+    """Write indexing results incrementally to one HDF5 file.
+
+    Notes
+    -----
+    Every :meth:`append` checks the result type and the frame identity
+    before touching the file. If a write then raises, for any reason
+    including malformed result content, the file is left with a partially
+    appended frame and the writer is marked failed: ``failed`` becomes `True`, ``error``
+    holds the exception, and further appends are refused. There is no
+    transactional recovery; the file is not a valid results file and the run
+    must be rewritten from the start. :func:`validate_results_file` detects
+    such a file.
+    """
 
     def __init__(
         self,
@@ -63,6 +76,17 @@ class ResultsWriter:
         self._count = 0
         self._frame_id_kind = None
         self._frame_ids = set()
+        self.error: Exception | None = None
+
+    @property
+    def failed(self) -> bool:
+        """Whether a write raised, leaving the file unusable."""
+        return self.error is not None
+
+    @property
+    def count(self) -> int:
+        """Frames appended so far."""
+        return self._count
 
     def __enter__(self) -> "ResultsWriter":
         self._file = h5py.File(self.path, self._mode)
@@ -76,7 +100,7 @@ class ResultsWriter:
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         if self._file is not None:
-            if exc_type is None and "/frames/frame_ids" not in self._file:
+            if exc_type is None and not self.failed and "/frames/frame_ids" not in self._file:
                 self._create_resizable("/frames/frame_ids", DATASETS["/frames/frame_ids"])
             self._file.close()
             self._file = None
@@ -135,7 +159,7 @@ class ResultsWriter:
         dataset.resize((start + count,) + dataset.shape[1:])
         dataset[start:] = values
 
-    def _append_frame_id(self, frame_id) -> None:
+    def _check_frame_id(self, frame_id):
         if isinstance(frame_id, (bool, np.bool_)) or not isinstance(frame_id, (str, Integral)):
             raise TypeError("frame IDs must be strings or integers")
         kind = "string" if isinstance(frame_id, str) else "integer"
@@ -144,22 +168,59 @@ class ResultsWriter:
         frame_id = frame_id if kind == "string" else int(frame_id)
         if frame_id in self._frame_ids:
             raise ValueError("frame IDs must be unique")
-        self._frame_ids.add(frame_id)
+        return kind, frame_id
+
+    def _append_frame_id(self, kind, frame_id) -> None:
         if self._frame_id_kind is None:
             self._frame_id_kind = kind
             spec = FRAME_IDS_STRING_SPEC if kind == "string" else DATASETS["/frames/frame_ids"]
             self._create_resizable("/frames/frame_ids", spec)
         self._append("/frames/frame_ids", frame_id)
+        self._frame_ids.add(frame_id)
 
     def append(self, result: FrameResult, frame_id=None) -> None:
-        """Append one frame result and its ragged peaks and patterns."""
+        """Append one frame result and its ragged peaks and patterns.
+
+        Parameters
+        ----------
+        result
+            The frame result to store.
+        frame_id
+            Unique string or integer identity; defaults to the zero-based
+            append position. All identities in one file share one kind.
+
+        Raises
+        ------
+        RuntimeError
+            If the writer is not open or has failed earlier.
+        TypeError, ValueError
+            If ``result`` is not a ``FrameResult`` or ``frame_id`` is not a
+            unique identity of the file's kind. These are raised before
+            anything is written, so the writer remains usable.
+        Exception
+            Any error raised while writing, including one caused by
+            malformed result content such as a sample position of the wrong
+            length, marks the writer failed and propagates.
+        """
         if self._file is None:
             raise RuntimeError("ResultsWriter must be used as a context manager")
+        if self.failed:
+            raise RuntimeError(
+                f"ResultsWriter failed earlier ({self.error!r}); {self.path} is not a valid "
+                "results file and must be rewritten"
+            )
         if not isinstance(result, FrameResult):
             raise TypeError("result must be a FrameResult")
-        frame_id = self._count if frame_id is None else frame_id
-        self._append_frame_id(frame_id)
+        kind, frame_id = self._check_frame_id(self._count if frame_id is None else frame_id)
+        try:
+            self._write_frame(result, kind, frame_id)
+        except Exception as error:
+            self.error = error
+            raise
+        self._count += 1
 
+    def _write_frame(self, result: FrameResult, kind, frame_id) -> None:
+        self._append_frame_id(kind, frame_id)
         metadata = result.metadata
         position = metadata.get("sample_position", (np.nan, np.nan, np.nan))
         frame_values = {
@@ -216,7 +277,6 @@ class ResultsWriter:
             self._append("/patterns/assignment_offsets", len(self._file["/assignments/peak_index"]))
         self._append("/frames/peak_offsets", len(self._file["/peaks/fit_x"]))
         self._append("/frames/pattern_offsets", len(self._file["/patterns/rank"]))
-        self._count += 1
 
 
 def write_results(indexer, results: Iterable[FrameResult], path, *, frame_ids=None, overwrite=False) -> None:
@@ -240,3 +300,229 @@ def write_results(indexer, results: Iterable[FrameResult], path, *, frame_ids=No
                 pass
             else:
                 raise ValueError(f"frame_ids must contain {count} values")
+
+
+@dataclass(frozen=True)
+class ResultsFileSummary:
+    """Counts and provenance of a validated indexing-results file.
+
+    Parameters
+    ----------
+    path
+        The validated file.
+    version
+        Layout version.
+    n_frames, n_peaks, n_patterns, n_assignments
+        Row counts of the four record groups.
+    frame_ids
+        Frame identities in file order, as strings or integers.
+    has_crystal
+        Whether the file carries a crystal group.
+    has_geometry_text
+        Whether the geometry XML text is embedded.
+    created, lauelab_version
+        Root attributes written by the producer.
+    source
+        The XML document a converted file came from, or `None`.
+    """
+
+    path: Path
+    version: int
+    n_frames: int
+    n_peaks: int
+    n_patterns: int
+    n_assignments: int
+    frame_ids: tuple
+    has_crystal: bool
+    has_geometry_text: bool
+    created: str
+    lauelab_version: str
+    source: str | None = None
+
+
+def _attr_text(attrs, name, default=""):
+    value = attrs.get(name, default)
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+
+
+def validate_results_file(
+    path, *, frame_ids: Iterable[Hashable] | None = None, n_frames: int | None = None
+) -> ResultsFileSummary:
+    """Check the structure of a closed indexing-results file with bounded reads.
+
+    Parameters
+    ----------
+    path
+        Results file to check. It must be closed by its writer.
+    frame_ids
+        Optional expected identities in order, such as a run manifest. The
+        file's ``frames/frame_ids`` must equal this sequence exactly.
+    n_frames
+        Optional expected frame count.
+
+    Returns
+    -------
+    ResultsFileSummary
+        Counts and provenance read during the check.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be opened as HDF5.
+    InvalidResultsFile
+        If the format marker or version is wrong; a group or dataset is
+        missing or has the wrong dtype or trailing shape; per-frame,
+        per-peak, per-pattern, or per-assignment datasets disagree in length;
+        an offsets dataset does not start at zero, increase monotonically, and
+        end at its group's row count; ``n_peaks``, ``n_patterns``, or
+        ``n_indexed`` disagree with the offsets; pattern ranks do not restart
+        at zero within each frame; an assignment refers outside its owning frame;
+        frame identities repeat; or the file does
+        not match ``frame_ids`` or ``n_frames``.
+
+    Notes
+    -----
+    The check reads dataset shapes and dtypes, the per-frame and per-pattern
+    bookkeeping arrays (identities, counts, ranks, offsets), and root
+    attributes. Assignment peak indices are checked in bounded chunks. Peak
+    values, reciprocal lattices, and other assignment arrays are not read. It
+    establishes that the file is complete and self-consistent, not that the
+    science in it is right; a valid file can describe an incomplete run.
+    """
+    path = Path(path)
+
+    def fail(message):
+        raise InvalidResultsFile(f"{path}: {message}")
+
+    with h5py.File(path, "r") as source:
+        try:
+            version = check_format_version(
+                source, format_name=FORMAT, supported_versions=SUPPORTED_VERSIONS
+            )
+        except ValueError as error:
+            fail(str(error))
+        for group in ("run", "geometry", "frames", "peaks", "patterns", "assignments"):
+            if group not in source or not isinstance(source[group], h5py.Group):
+                fail(f"missing group {group!r}")
+
+        def dataset(name, spec=None):
+            if name not in source or not isinstance(source[name], h5py.Dataset):
+                fail(f"missing dataset {name!r}")
+            data = source[name]
+            if spec is not None:
+                if spec.dtype.kind == "O":
+                    if h5py.check_string_dtype(data.dtype) is None:
+                        fail(f"dataset {name!r} must hold strings, not {data.dtype}")
+                elif data.dtype != spec.dtype:
+                    fail(f"dataset {name!r} has dtype {data.dtype}, expected {spec.dtype}")
+                if data.shape[1:] != spec.shape:
+                    fail(f"dataset {name!r} has shape {data.shape}, expected trailing {spec.shape}")
+            return data
+
+        ids_data = dataset("/frames/frame_ids")
+        if ids_data.ndim != 1:
+            fail("dataset '/frames/frame_ids' must be one-dimensional")
+        if h5py.check_string_dtype(ids_data.dtype) is not None:
+            ids = tuple(ids_data.asstr()[...])
+        elif ids_data.dtype == DATASETS["/frames/frame_ids"].dtype:
+            ids = tuple(int(value) for value in ids_data[...])
+        else:
+            fail(f"dataset '/frames/frame_ids' has dtype {ids_data.dtype}, expected int32 or string")
+        count = len(ids)
+        if len(set(ids)) != count:
+            fail("frame identities repeat")
+
+        lengths = {}
+        for name, spec in DATASETS.items():
+            if not spec.resizable or name == "/frames/frame_ids":
+                continue
+            data = dataset(name, spec)
+            lengths[name] = len(data)
+        n_peaks = lengths["/peaks/fit_x"]
+        n_patterns = lengths["/patterns/rank"]
+        n_assignments = lengths["/assignments/peak_index"]
+        for name, length in lengths.items():
+            group = name.split("/")[1]
+            if name.endswith("_offsets"):
+                owners = count if group == "frames" else n_patterns
+                expected = owners + 1
+            else:
+                expected = {"frames": count, "peaks": n_peaks, "patterns": n_patterns,
+                            "assignments": n_assignments}[group]
+            if length != expected:
+                fail(f"dataset {name!r} has {length} rows, expected {expected}")
+
+        def offsets(name, total):
+            values = source[name][...]
+            if len(values) == 0 or values[0] != 0 or values[-1] != total or np.any(np.diff(values) < 0):
+                fail(f"{name!r} does not partition {total} rows")
+            return values
+
+        peak_offsets = offsets("/frames/peak_offsets", n_peaks)
+        pattern_offsets = offsets("/frames/pattern_offsets", n_patterns)
+        assignment_offsets = offsets("/patterns/assignment_offsets", n_assignments)
+        if not np.array_equal(source["/frames/n_peaks"][...], np.diff(peak_offsets)):
+            fail("'/frames/n_peaks' disagrees with '/frames/peak_offsets'")
+        if not np.array_equal(source["/frames/n_patterns"][...], np.diff(pattern_offsets)):
+            fail("'/frames/n_patterns' disagrees with '/frames/pattern_offsets'")
+        if not np.array_equal(source["/patterns/n_indexed"][...], np.diff(assignment_offsets)):
+            fail("'/patterns/n_indexed' disagrees with '/patterns/assignment_offsets'")
+        expected_rank = np.arange(n_patterns) - np.repeat(pattern_offsets[:-1], np.diff(pattern_offsets))
+        if not np.array_equal(source["/patterns/rank"][...], expected_rank):
+            fail("'/patterns/rank' does not restart at zero within each frame")
+
+        # Assignment indices are frame-local, not global peak row numbers.
+        # Bound temporary ownership/index arrays independently of file size.
+        assignment_indices = source["/assignments/peak_index"]
+        for start in range(0, n_assignments, 65536):
+            stop = min(start + 65536, n_assignments)
+            indices = assignment_indices[start:stop]
+            pattern_rows = np.searchsorted(assignment_offsets, np.arange(start, stop), side="right") - 1
+            frame_rows = np.searchsorted(pattern_offsets, pattern_rows, side="right") - 1
+            limits = peak_offsets[frame_rows + 1] - peak_offsets[frame_rows]
+            invalid = (indices < 0) | (indices >= limits)
+            if np.any(invalid):
+                local = int(np.flatnonzero(invalid)[0])
+                fail(
+                    f"assignment {start + local} has peak index {indices[local]} outside "
+                    f"frame {ids[frame_rows[local]]!r}'s {limits[local]} peaks"
+                )
+
+        has_crystal = "crystal" in source
+        if has_crystal:
+            lattice = dataset("/crystal/lattice_parameters")
+            if lattice.shape != (6,):
+                fail(f"dataset '/crystal/lattice_parameters' has shape {lattice.shape}, expected (6,)")
+            atom_lengths = set()
+            for name, spec in DATASETS.items():
+                if name.startswith("/crystal/atom_"):
+                    atom_lengths.add(len(dataset(name, spec)))
+            if len(atom_lengths) != 1:
+                fail("crystal atom datasets disagree in length")
+        has_geometry_text = "/geometry/xml" in source
+
+        if n_frames is not None and count != n_frames:
+            fail(f"file has {count} frames, expected {n_frames}")
+        if frame_ids is not None:
+            expected_ids = tuple(frame_ids)
+            if len(expected_ids) != count:
+                fail(f"file has {count} frames, manifest has {len(expected_ids)}")
+            for position, (actual, expected) in enumerate(zip(ids, expected_ids)):
+                if actual != expected:
+                    fail(f"frame {position} has identity {actual!r}, manifest has {expected!r}")
+
+        attrs = source.attrs
+        return ResultsFileSummary(
+            path=path,
+            version=version,
+            n_frames=count,
+            n_peaks=n_peaks,
+            n_patterns=n_patterns,
+            n_assignments=n_assignments,
+            frame_ids=ids,
+            has_crystal=has_crystal,
+            has_geometry_text=has_geometry_text,
+            created=_attr_text(attrs, "created"),
+            lauelab_version=_attr_text(attrs, "lauelab_version"),
+            source=_attr_text(attrs, "source") if "source" in attrs else None,
+        )

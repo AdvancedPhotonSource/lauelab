@@ -6,7 +6,7 @@ Indexing converts intensity measurements on a detector into one or more candidat
 
 A complete orientation-indexing call needs:
 
-- A two-dimensional `numpy.uint16` detector frame
+- A two-dimensional detector frame, `numpy.uint16` for raw frames or another [supported dtype](../guides/frame-input.md) for reconstructed ones
 - A geometry that maps detector pixels into the 34-ID-E laboratory frame
 - A crystal description with a unit cell and space group
 - Peak-search and indexing parameters, or their defaults

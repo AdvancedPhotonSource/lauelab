@@ -30,6 +30,10 @@ Store variable-length per-record data as one flat dataset plus an offsets datase
 
 Store datasets uncompressed unless the writer offers compression as an option; compressed reads cost several times more and these files are small next to the frames they summarize. A writer that appends records uses chunked datasets with an unlimited first dimension, which costs a few milliseconds per read.
 
+## Validation and publication
+
+The format marker identifies a file; it does not certify it. A lauelab-defined format comes with a validator that checks, with bounded reads, that every dataset of the layout is present with its dtype and shape, that row counts agree, and that offsets partition their rows; for indexing results that is `lauelab.indexing.validate_results_file`; a future single-file reconstruction format must ship its own. A producer writes to the destination's `.partial` name, closes the file, validates it, and renames it into place with `lauelab.publish_file`, so a reader never sees an incomplete file under the final name. A writer that fails mid-record does not attempt repair; it marks itself failed and the file is rewritten.
+
 ## Layout definition
 
 Define the complete layout of a format in one module: every dataset path, dtype, shape, units, and fixed attribute. The writer, reader, converter, and reference documentation read that one table, and a test compares it against the documented layout. The indexing results layout is `lauelab/_results_layout.py`; the shared root-attribute and version helpers are `lauelab/_hdf5.py`.

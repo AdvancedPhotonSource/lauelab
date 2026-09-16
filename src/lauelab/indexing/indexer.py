@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from numbers import Real
 from pathlib import Path
 from time import perf_counter
 from typing import Iterable, Literal, Mapping
@@ -14,7 +15,7 @@ import numpy as np
 
 from ._liblaue import Geometry, NativeCrystal, ffi, get_library
 from .crystal import Crystal, load_crystal
-from .errors import IndexingError, InputError
+from .errors import IndexingError, InputError, NumericalIndexingError
 from ._frame import read_h5_frame, roi_inclusive_end
 from .lau_dataclasses.atom import Atom as StepAtom
 from .lau_dataclasses.hkls import HKLs
@@ -23,7 +24,7 @@ from .lau_dataclasses.pattern import Pattern as StepPattern
 from .lau_dataclasses.recipLattice import RecipLattice
 from .lau_dataclasses.step import Step
 from .lau_dataclasses.xtl import Xtl
-from .xml_utils import write_combined_xml, write_step_xml
+from .xml_utils import write_step_xml
 
 
 def _raise_native_error(status: int, stage: str, message: str) -> None:
@@ -32,7 +33,36 @@ def _raise_native_error(status: int, stage: str, message: str) -> None:
         raise MemoryError(detail)
     if status == 1:
         raise InputError(detail)
+    if status == 3:
+        raise NumericalIndexingError(detail)
     raise IndexingError(detail)
+
+
+# Frame dtypes accepted by :meth:`Indexer.index`, keyed by ``numpy.dtype.name``.
+# Each maps to the native pixel type whose elements convert to double exactly.
+_PIXEL_TYPE_NAMES = {
+    "uint16": "LAUE_PIXEL_U16",
+    "float64": "LAUE_PIXEL_F64",
+    "int32": "LAUE_PIXEL_I32",
+    "float32": "LAUE_PIXEL_F32",
+    "int16": "LAUE_PIXEL_I16",
+    "uint8": "LAUE_PIXEL_U8",
+    "int8": "LAUE_PIXEL_I8",
+}
+SUPPORTED_FRAME_DTYPES = tuple(np.dtype(name) for name in _PIXEL_TYPE_NAMES)
+
+
+def _whole_number(value, name: str) -> int:
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, Real)
+        or not np.isfinite(value)
+        or int(value) != value
+    ):
+        raise InputError(
+            f"{name} must be a whole number such as 3 or 3.0; received {value!r}"
+        )
+    return int(value)
 
 
 PEAK_DTYPE = np.dtype([
@@ -57,12 +87,15 @@ class PeakParams:
     ----------
     boxsize
         Half-width, in pixels, of the square region used to fit each peak.
+        Must be a positive whole number.
     max_rfactor
         Maximum fit residual factor accepted for a peak. Must be positive.
     min_size
-        Minimum peak size in pixels. Must be positive.
+        Minimum peak size in pixels. Must be a positive whole number; ``3``
+        and ``3.0`` are accepted, ``3.5`` is rejected rather than rounded.
     min_separation
-        Minimum separation between accepted peaks in pixels. Must be positive.
+        Minimum separation between accepted peaks in pixels. Must be a
+        positive whole number.
     threshold
         Absolute intensity threshold. If `None`, derive a threshold from the
         image statistics and ``threshold_ratio``.
@@ -72,7 +105,10 @@ class PeakParams:
     peak_shape
         Peak model, either ``"Lorentzian"`` or ``"Gaussian"``.
     max_peaks
-        Maximum number of peaks returned from one frame. Must be positive.
+        Maximum number of peaks returned from one frame, as a positive whole
+        number, or `None` for no limit. With `None`, every blob above the
+        threshold is fitted; the result count is bounded only by the number of
+        blobs in the frame.
     smooth
         Whether to smooth the image before peak detection and fitting.
 
@@ -80,7 +116,8 @@ class PeakParams:
     -----
     Instances are immutable. Use :func:`dataclasses.replace` to derive a
     configuration with changed values. Parameter validation occurs when an
-    :class:`Indexer` is constructed.
+    :class:`Indexer` is constructed, which also normalizes whole-number
+    floats such as ``3.0`` to ``int``.
     """
 
     boxsize: int = 5
@@ -90,7 +127,7 @@ class PeakParams:
     threshold: float | None = 100.0
     threshold_ratio: float | None = None
     peak_shape: Literal["Lorentzian", "Gaussian"] = "Lorentzian"
-    max_peaks: int = 50
+    max_peaks: int | None = 50
     smooth: bool = False
 
 
@@ -244,10 +281,10 @@ class IndexParams:
     cone_deg
         Search cone angle in degrees. Must be positive.
     hkl_prefer
-        Preferred Miller-index direction as exactly three integers.
+        Preferred Miller-index direction as exactly three whole numbers.
     max_data
         Maximum number of detected peaks supplied to the orientation indexer.
-        Must be at least two.
+        Must be a whole number of at least two.
 
     Notes
     -----
@@ -306,11 +343,13 @@ class FrameResult:
     group
         Detector-pixel grouping factors as ``(x, y)``.
     depth
-        Optional sample depth in micrometres passed to the geometry conversion.
+        Physical sample depth in micrometres used by the geometry conversion,
+        or `None` when no depth applied. For HDF5 input this is the explicit
+        argument when one was given, otherwise the file's ``entry1/depth``.
     image
-        Retained contiguous ``uint16`` frame, or `None` when image retention
-        was disabled. This array can alias a contiguous array supplied by the
-        caller. Native smoothing uses a separate working copy.
+        Retained contiguous frame in its input dtype, or `None` when image
+        retention was disabled. This array can alias a contiguous array
+        supplied by the caller. Native smoothing uses a separate working copy.
 
     Notes
     -----
@@ -460,8 +499,8 @@ def index_frame(
     Parameters
     ----------
     frame
-        Two-dimensional ``uint16`` NumPy array or path to a supported HDF5
-        frame.
+        Two-dimensional NumPy array with a dtype in
+        :data:`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES`, or path to a supported HDF5 frame.
     geometry
         Parsed detector geometry or path to a geometry XML file.
     crystal
@@ -482,7 +521,8 @@ def index_frame(
     start, group
         Full-detector ROI origin and pixel grouping in ``(x, y)`` order.
     depth
-        Sample depth in micrometres, or `None` for the beamline origin.
+        Physical sample depth in micrometres. `None` uses the HDF5 frame's
+        ``entry1/depth`` when present and finite, otherwise no depth.
     mask
         Optional mask matching the frame shape. Nonzero pixels are excluded.
     metadata
@@ -566,9 +606,13 @@ class Indexer:
     Notes
     -----
     Reuse one instance for frames that share geometry, crystal, detector, and
-    processing parameters. Calls to :meth:`index` on one instance are safe from
-    concurrent Python threads. Each call owns its result storage, and native
-    diagnostic output uses thread-local state.
+    processing parameters. Concurrent calls to :meth:`index` from several
+    Python threads are not a supported contract. For parallel work, give each
+    worker process its own indexer; see :doc:`/guides/batch-indexing`.
+
+    Construction normalizes whole-number floats in the parameter objects to
+    ``int``, so ``indexer.peak_params`` can differ in type, never in value,
+    from the object passed in.
 
     Use :meth:`replace` to create a separately validated instance with changed
     configuration.
@@ -589,13 +633,9 @@ class Indexer:
         self.geometry = geometry if isinstance(geometry, Geometry) else Geometry(self.geometry_path)
         self.crystal = load_crystal(crystal) if isinstance(crystal, (str, Path)) else crystal
         self._crystal = NativeCrystal.create(self.crystal) if self.crystal is not None else None
-        self.peak_params = peak_params or PeakParams()
-        self.index_params = index_params or IndexParams()
-        self._validate_params()
-        if len(self.index_params.hkl_prefer) != 3:
-            raise InputError("hkl_prefer must contain exactly three integers")
-        if self.index_params.max_data < 2:
-            raise InputError("max_data must be at least 2")
+        self.peak_params, self.index_params = self._validate_params(
+            peak_params or PeakParams(), index_params or IndexParams()
+        )
         if detector_id is not None:
             detector_index = self.geometry.find_detector(detector_id)
             if detector_index < 0:
@@ -616,11 +656,21 @@ class Indexer:
             f"crystal={crystal}, smooth={self.peak_params.smooth})"
         )
 
-    def _validate_params(self) -> None:
-        peak = self.peak_params
-        indexing = self.index_params
-        if peak.boxsize < 1 or peak.min_size < 1 or peak.min_separation < 1 or peak.max_peaks < 1:
-            raise InputError("peak sizes, separation, and max_peaks must be positive")
+    @staticmethod
+    def _validate_params(
+        peak: PeakParams, indexing: IndexParams
+    ) -> tuple[PeakParams, IndexParams]:
+        counts = {
+            name: _whole_number(getattr(peak, name), name)
+            for name in ("boxsize", "min_size", "min_separation")
+        }
+        if peak.max_peaks is not None:
+            counts["max_peaks"] = _whole_number(peak.max_peaks, "max_peaks")
+        if min(counts.values()) < 1:
+            raise InputError(
+                "peak sizes, separation, and max_peaks must be positive "
+                "(max_peaks may be None for no limit)"
+            )
         if peak.max_rfactor <= 0:
             raise InputError("max_rfactor must be positive")
         if peak.threshold_ratio is not None and peak.threshold_ratio <= 0:
@@ -629,6 +679,16 @@ class Indexer:
             raise InputError("peak_shape must be 'Lorentzian' or 'Gaussian'")
         if min(indexing.kev_max_calc, indexing.kev_max_test, indexing.angle_tolerance_deg, indexing.cone_deg) <= 0:
             raise InputError("indexing energy and angle parameters must be positive")
+        if len(indexing.hkl_prefer) != 3:
+            raise InputError("hkl_prefer must contain exactly three integers")
+        hkl_prefer = tuple(_whole_number(value, "hkl_prefer") for value in indexing.hkl_prefer)
+        max_data = _whole_number(indexing.max_data, "max_data")
+        if max_data < 2:
+            raise InputError("max_data must be at least 2")
+        return (
+            replace(peak, **counts),
+            replace(indexing, hkl_prefer=hkl_prefer, max_data=max_data),
+        )
 
     def index(
         self,
@@ -646,15 +706,19 @@ class Indexer:
         Parameters
         ----------
         frame
-            Two-dimensional ``uint16`` NumPy array or path to a supported HDF5
-            frame.
+            Two-dimensional NumPy array with a dtype in
+            :data:`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES`, or path to a supported HDF5 frame
+            whose image has one of those dtypes. Pixel values enter peak search
+            as their exact double value; no other dtype is converted.
         start
             Zero-based detector ``(x, y)`` origin for an in-memory frame.
         group
             Positive detector-pixel grouping factors as ``(x, y)``.
         depth
-            Optional finite sample depth in micrometres passed to pixel-to-q
-            conversion.
+            Physical sample depth in micrometres passed to pixel-to-q
+            conversion. `None` uses the HDF5 frame's ``entry1/depth`` when
+            that dataset is present and finite, and no depth otherwise. An
+            explicit finite value, including ``0.0``, overrides the file.
         mask
             Array with the same shape as ``frame``. Values are converted to a
             boolean ``uint8`` mask and passed to native peak search, where
@@ -676,11 +740,8 @@ class Indexer:
         ------
         InputError
             If the frame, region, mask, metadata, or selected detector is
-            invalid.
-        KeyError
-            If a required HDF5 image dataset is missing.
-        OSError
-            If an HDF5 input file cannot be opened.
+            invalid, or an HDF5 input is missing, unreadable, or malformed.
+            File-reading errors are preserved as the exception's cause.
         MemoryError
             If a native stage cannot allocate required memory.
         IndexingError
@@ -689,9 +750,14 @@ class Indexer:
         Notes
         -----
         For HDF5 input, detector ``start`` and ``group`` values from the file
-        take precedence over method arguments when present. A retained image
-        can alias a contiguous array supplied by the caller. Native peak search
+        take precedence over method arguments when present; ``depth`` works
+        the other way, the argument overriding the file. A retained image can
+        alias a contiguous array supplied by the caller. Native peak search
         uses a separate working copy, so smoothing does not modify that array.
+
+        A frame stored with a non-native byte order is byte-swapped to a
+        native-order copy of the same dtype before processing. Floating-point
+        frames must be finite.
 
         Frame statistics exclude masked pixels and always describe the raw
         input image. Smoothing applies only to peak detection and fitting. Under
@@ -706,16 +772,28 @@ class Indexer:
         supplied_metadata = metadata.as_dict() if isinstance(metadata, FrameMetadata) else dict(metadata or {})
         if isinstance(frame, (str, Path)):
             input_image = str(frame)
-            source, file_metadata, file_processing = read_h5_frame(frame)
+            try:
+                source, file_metadata, file_processing = read_h5_frame(frame)
+            except (OSError, KeyError, ValueError) as error:
+                raise InputError(f"cannot read HDF5 frame {frame}: {error}") from error
             supplied_metadata = {**file_metadata, **supplied_metadata}
             start = file_processing.get("start", start)
             group = file_processing.get("group", group)
+            if depth is None:
+                depth = file_processing.get("depth")
         else:
             source = np.asarray(frame)
-        if source.ndim != 2 or source.dtype != np.uint16:
+        if source.dtype.byteorder == ">":
+            source = source.astype(source.dtype.newbyteorder("="))
+        pixel_type_name = _PIXEL_TYPE_NAMES.get(source.dtype.name)
+        if source.ndim != 2 or pixel_type_name is None:
+            supported = ", ".join(dtype.name for dtype in SUPPORTED_FRAME_DTYPES)
             raise InputError(
-                f"frame must be a 2D uint16 array; received shape={source.shape}, dtype={source.dtype}"
+                f"frame must be a 2D array with dtype in ({supported}); "
+                f"received shape={source.shape}, dtype={source.dtype}"
             )
+        if source.dtype.kind == "f" and not np.isfinite(source).all():
+            raise InputError("frame contains non-finite pixel values")
         image = np.ascontiguousarray(source)
         if (
             len(start) != 2
@@ -764,15 +842,18 @@ class Indexer:
         params.threshold = np.nan if self.peak_params.threshold is None else self.peak_params.threshold
         params.threshold_ratio = threshold_ratio
         params.peak_shape = 1 if self.peak_params.peak_shape == "Gaussian" else 0
-        params.max_peaks = self.peak_params.max_peaks
+        # Native convention: 0 means no limit.
+        params.max_peaks = 0 if self.peak_params.max_peaks is None else self.peak_params.max_peaks
         params.smooth = self.peak_params.smooth
         params.mask = mask_pointer
 
         library = get_library()
         result = ffi.new("laue_frame_result *")
-        pixels = ffi.from_buffer("unsigned short[]", image)
+        pixels = ffi.from_buffer(image)
         peaksearch_started = perf_counter()
-        status = library.laue_find_peaks(pixels, image.shape[1], image.shape[0], params, result)
+        status = library.laue_find_peaks_typed(
+            pixels, getattr(library, pixel_type_name), image.shape[1], image.shape[0], params, result
+        )
         peaksearch_seconds = perf_counter() - peaksearch_started
         if status:
             message = ffi.string(result.message).decode(errors="replace")
@@ -870,8 +951,8 @@ class Indexer:
         Parameters
         ----------
         frames
-            Iterable of two-dimensional ``uint16`` arrays or supported HDF5
-            paths.
+            Iterable of two-dimensional arrays with supported dtypes or
+            supported HDF5 paths.
         keep_images
             Retain each input image in its result. Defaults to `False` to limit
             batch memory use.
@@ -896,6 +977,82 @@ class Indexer:
         exception.
         """
         return [self.index(frame, keep_image=keep_images) for frame in frames]
+
+    def iter_index(
+        self,
+        inputs: Iterable,
+        *,
+        mask: np.ndarray | None = None,
+        workers: int = 1,
+        max_in_flight: int | None = None,
+        should_stop=None,
+        keep_images: bool = False,
+        poll_seconds: float = 0.25,
+    ):
+        """Index frames in worker processes, yielding one outcome per input in order.
+
+        Parameters
+        ----------
+        inputs
+            Iterable of :class:`FrameInput` objects, or of frames accepted by
+            :meth:`index` (arrays or HDF5 paths), which are wrapped with
+            default processing values and no ``input_id``. The iterable is
+            consumed lazily as the in-flight window admits work.
+        mask
+            Optional mask shared by every frame, with nonzero pixels excluded.
+            It is sent to each worker once, not with every task.
+        workers
+            Positive number of worker processes. Each builds its own
+            :class:`Indexer` from this indexer's geometry path, crystal,
+            parameters, detector selection, and ``cosmic_filter``.
+        max_in_flight
+            Bound on inputs submitted but not yet consumed, which also bounds
+            the results held for in-order delivery. Must be at least
+            ``workers``. Defaults to ``2 * workers``.
+        should_stop
+            Optional callable returning `True` to request a cooperative stop.
+            It is polled before every submission and at least every
+            ``poll_seconds`` while waiting. On `True`, no further inputs are
+            admitted, unstarted inputs are withdrawn, running inputs finish and
+            are yielded, then iteration ends with ``stopped`` set.
+        keep_images
+            Retain each input image in its result. Defaults to `False`; a
+            retained image adds one detector-sized array to every result sent
+            between processes.
+        poll_seconds
+            Longest interval between ``should_stop`` checks while waiting.
+
+        Returns
+        -------
+        FrameOutcomes
+            Iterate inside a ``with`` block. Each :class:`FrameOutcome` holds
+            either a :class:`FrameResult`, including results with no peaks or
+            patterns, or an expected input error from
+            :data:`EXPECTED_INPUT_ERRORS`, and the iteration continues after
+            such errors.
+
+        Raises
+        ------
+        InputError
+            If ``workers``, ``max_in_flight``, ``should_stop``, ``poll_seconds``,
+            or ``mask`` is invalid.
+        WorkerError
+            During iteration, if a worker cannot initialize, raises an
+            unexpected exception, or the pool breaks. Iteration cannot continue.
+
+        Notes
+        -----
+        Workers use the ``spawn`` start method; guard module-level calls with
+        ``if __name__ == "__main__":``. This method schedules computation
+        only. Writing results, recording failures, and deciding what to do
+        after a stop belong to the caller.
+        """
+        from .incremental import FrameOutcomes
+
+        return FrameOutcomes(
+            self, inputs, mask=mask, workers=workers, max_in_flight=max_in_flight,
+            should_stop=should_stop, keep_images=keep_images, poll_seconds=poll_seconds,
+        )
 
     def replace(self, **changes) -> "Indexer":
         """Create an indexer with selected configuration values replaced.
@@ -982,8 +1139,31 @@ class Indexer:
             If any result has no XML snapshot.
         OSError
             If the destination cannot be written.
+
+        Notes
+        -----
+        Results are serialized one at a time through
+        :class:`~lauelab.indexing.XmlResultsWriter`, so memory use does not
+        grow with the number of results. The output is identical to writing
+        the collected steps in one call. The document is written under the
+        destination's ``.partial`` name and renamed into place on success, so
+        a failure leaves an existing destination as it was.
         """
-        write_combined_xml([result.to_step() for result in results], str(path))
+        from lauelab._publish import partial_path, publish_file
+
+        from .xml_utils import XmlResultsWriter
+
+        # Write privately so that a result without a snapshot, or a write
+        # failure, leaves an existing destination untouched.
+        partial = partial_path(path)
+        try:
+            with XmlResultsWriter(partial, overwrite=True) as writer:
+                for result in results:
+                    writer.append(result)
+            publish_file(partial, path, overwrite=True)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _crystal_to_xtl(crystal: Crystal) -> Xtl:

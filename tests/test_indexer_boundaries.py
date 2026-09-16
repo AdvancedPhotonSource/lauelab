@@ -68,11 +68,12 @@ def test_indexer_rejects_invalid_index_parameters(index_params, message):
     "frame",
     [
         np.zeros((2, 3, 4), dtype=np.uint16),
-        np.zeros((3, 4), dtype=np.float32),
+        np.zeros((3, 4), dtype=np.uint32),
+        np.zeros((3, 4), dtype=np.int64),
     ],
 )
 def test_index_rejects_invalid_frame_arrays(frame):
-    with pytest.raises(InputError, match="2D uint16"):
+    with pytest.raises(InputError, match="2D array with dtype in"):
         Indexer(GEOMETRY).index(frame)
 
 
@@ -194,8 +195,9 @@ def test_hdf5_requires_image_dataset(tmp_path):
     with h5py.File(path, "w"):
         pass
 
-    with pytest.raises(KeyError):
+    with pytest.raises(InputError, match="cannot read HDF5") as caught:
         Indexer(GEOMETRY).index(path)
+    assert isinstance(caught.value.__cause__, KeyError)
 
 
 def test_batch_order_and_image_retention():
@@ -281,12 +283,12 @@ class _FailingLibrary:
     def __getattr__(self, name):
         return getattr(self.real, name)
 
-    def laue_find_peaks(self, pixels, nx, ny, params, result):
+    def laue_find_peaks_typed(self, pixels, pixel_type, nx, ny, params, result):
         if self.stage == "peak search":
             result.status = self.status
             result.message = b"injected failure"
             return self.status
-        return self.real.laue_find_peaks(pixels, nx, ny, params, result)
+        return self.real.laue_find_peaks_typed(pixels, pixel_type, nx, ny, params, result)
 
     def laue_pixels_to_q(self, geometry, detector_index, result):
         if self.stage == "pixel-to-q conversion":

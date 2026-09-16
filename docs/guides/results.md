@@ -114,7 +114,7 @@ The result records:
 
 ## Retained images
 
-`index_frame()` and `Indexer.index()` retain a contiguous `uint16` image by default. A retained image can alias a C-contiguous array supplied by the caller. Native smoothing uses a separate working copy, so `result.image` remains the unsmoothed input. Set `keep_image=False` when downstream work only needs processed data.
+`index_frame()` and `Indexer.index()` retain a contiguous image, in its input dtype, by default. A retained image can alias a C-contiguous array supplied by the caller. Native smoothing uses a separate working copy, so `result.image` remains the unsmoothed input. Set `keep_image=False` when downstream work only needs processed data.
 
 `Indexer.index_many()` does not retain images by default. This avoids keeping one detector-sized array per result.
 

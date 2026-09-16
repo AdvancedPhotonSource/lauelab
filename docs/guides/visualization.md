@@ -101,7 +101,10 @@ all_patterns = DataScope(patterns="all", min_indexed=3)
 all_frames = DataScope(patterns="all_frames")
 selected_ranks = DataScope(patterns=(0, 2), min_indexed=3)
 detected_threshold = DataScope(min_indexed=3, min_detected=5)
+with_unindexed = DataScope(patterns=(0,), min_detected=4, unindexed_frames=True)
 ```
+
+`unindexed_frames=True` keeps the frames that the pattern selection leaves empty, whether they were never indexed or every pattern was filtered out, provided they pass `min_detected`. Maps show them as gray frame-only records and frame-based tables keep their peaks. `patterns="all_frames"` implies it. A frame-only record has a real frame identity and no pattern identity; the library never invents a pattern for it.
 
 `patterns="all_frames"` lets `peak_table` include detected peaks from frames with no indexed patterns. Pattern filtering applies only to frames where patterns exist. An empty selection is valid. Prepared arrays keep their documented dimensionality, and tables keep their columns.
 
@@ -153,7 +156,48 @@ An alignment of `"frame"` requires one value per frame. `"pattern"` requires one
 
 Named scalar colors are `"n_indexed"`, `"goodness"`, `"rms_error"`, and `"n_patterns"`. Orientation-map colors use the same names as Laue Portal: `"cubic_ipf"`, `"rodrigues"`, `"misorientation"`, and `"pole_hsv"`. Inspect {data}`~lauelab.visualization.COLOR_MODES` for the complete map-color list.
 
-Cubic IPF and pole HSV coloring require a cubic crystal. Misorientation coloring also requires `misorientation_reference=(frame_id, pattern_index)`. Use `pole_hkl`, `pole_center`, and `pole_color_radius_deg` to configure pole HSV coloring.
+Cubic IPF and pole HSV coloring require a cubic crystal. Misorientation coloring also requires `misorientation_reference=(frame_id, pattern_index)`, a pattern that exists and has a finite orientation. Use `pole_hkl`, `pole_center`, and `pole_color_radius_deg` to configure pole HSV coloring.
+
+### Rodrigues symmetry and reference
+
+Rodrigues and misorientation colors reduce each orientation by the crystal's proper rotations before converting it to an axis·tan(θ/2) vector. `orientation_symmetry` controls that reduction:
+
+```python
+map_data = prepare_map(dataset, color="rodrigues", orientation_symmetry="auto")
+print(map_data.symmetry)
+```
+
+`"auto"` uses the crystal's operations when its system is cubic or hexagonal and applies no reduction otherwise; `map_data.symmetry` reports which one was applied (`"cubic"`, `"hexagonal"`, or `"none"`), so a tetragonal or unknown crystal is never silently treated as cubic. `"cubic"` and `"hexagonal"` force those operations, and `"none"` applies none. The same choice applies to `"misorientation"` coloring.
+
+By default the reference orientation is the laboratory frame, so a vector describes the rotation from the crystal's native reference basis. Two alternatives share the misorientation machinery:
+
+```python
+relative_to_pattern = prepare_map(
+    dataset, color="rodrigues", rodrigues_reference=("scan-42-point-7", 0)
+)
+relative_to_lattice = prepare_map(
+    dataset, color="rodrigues", rodrigues_reference_reciprocal=g_ref
+)
+```
+
+`rodrigues_reference` names an existing pattern by its stable identity; that pattern maps to the zero vector. `rodrigues_reference_reciprocal` is a `(3, 3)` reciprocal lattice with rows `a*`, `b*`, `c*` in 1/nm including the factor of two pi, the same convention as `VisualizationDataset.pattern_reciprocals`; its orientation relative to the crystal's native reference basis becomes the reference, so a pattern whose reciprocal lattice equals `g_ref` maps to the zero vector. The matrix must be finite and nonsingular, must describe the crystal's own lattice (a matrix in 1/angstrom or for a different cell is refused rather than colored as a misorientation), and needs crystal context. Passing both references, a pattern that does not exist, or a reference pattern without a finite orientation raises `ValueError`.
+
+### Frames without an indexed pattern
+
+With a scope that includes unindexed frames, `prepare_map()` appends one frame-only record per such frame after the pattern records:
+
+```python
+map_data = prepare_map(
+    dataset,
+    color="cubic_ipf",
+    scope=DataScope(patterns=(0,), min_detected=4, unindexed_frames=True),
+)
+frame_only = ~map_data.has_pattern
+```
+
+A frame-only record has `pattern_indices` equal to {data}`~lauelab.visualization.NO_PATTERN`, `indexed` `False`, real coordinates from frame-based axes, and `NaN` for any pattern-based color. Frame-based values stay real: `"n_patterns"` is `0` there, and a frame-aligned `ScalarColor` or `Axis` supplies its own value. A pattern-aligned `Axis` cannot place such a record and raises. `indexed` is also `False` for a pattern whose orientation could not be derived; `has_pattern` separates the two cases.
+
+`plot_map()` draws frame-only records and orientation-less patterns in the gray `unindexed` trace. For scalar colors the same trace holds every record whose value is `NaN`, so gray points never enter the color range. The record's `customdata` pattern identity is `None`, and {func}`~lauelab.visualization.selection_from_plotly` reports it as a selected frame with no pattern.
 
 ## Create Plotly figures
 

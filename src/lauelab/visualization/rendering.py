@@ -32,6 +32,7 @@ class _PreparationDefault:
 
 _AXES_DEFAULT = _PreparationDefault(("X", "Y"))
 _COLOR_DEFAULT = _PreparationDefault("n_indexed")
+_SYMMETRY_DEFAULT = _PreparationDefault("auto")
 _NONE_DEFAULT = _PreparationDefault(None)
 _HKL_DEFAULT = _PreparationDefault((1, 0, 0))
 _CENTER_DEFAULT = _PreparationDefault((0.0, 0.0))
@@ -101,9 +102,9 @@ def _customdata(frame_ids, pattern_indices=None, peak_indices=None, *, array=Tru
         rows = np.full((count, 3), np.nan)
         rows[:, 0] = frame_ids
         if pattern_indices is not None:
-            rows[:, 1] = pattern_indices
+            rows[:, 1] = [np.nan if value is None else value for value in pattern_indices]
         if peak_indices is not None:
-            rows[:, 2] = peak_indices
+            rows[:, 2] = [np.nan if value is None else value for value in peak_indices]
         # float32 is exact for integers below 2**24 and halves the payload.
         if np.nanmax(np.abs(rows)) < 2**24:
             rows = rows.astype(np.float32)
@@ -158,6 +159,9 @@ def plot_map(
     pole_hkl=_HKL_DEFAULT,
     pole_center=_CENTER_DEFAULT,
     pole_color_radius_deg=_RADIUS_DEFAULT,
+    orientation_symmetry=_SYMMETRY_DEFAULT,
+    rodrigues_reference=_NONE_DEFAULT,
+    rodrigues_reference_reciprocal=_NONE_DEFAULT,
     marker_size=10,
     layout_update=None,
     trace_update=None,
@@ -165,9 +169,14 @@ def plot_map(
     """Render a two- or three-dimensional spatial map with Plotly.
 
     ``source`` can be a :class:`MapData`, :class:`ResultSet`, or
-    :class:`VisualizationDataset`. Semantic trace roles are ``"data"`` and,
-    for orientation-color maps only, ``"unindexed"``; scalar colors render as
-    a single ``"data"`` trace.
+    :class:`VisualizationDataset`. Semantic trace roles are ``"data"`` and
+    ``"unindexed"``. The ``"unindexed"`` trace draws, in gray, patterns
+    without a finite orientation and frame-only records (frames with no
+    selected pattern, see :class:`~lauelab.visualization.DataScope`); for
+    scalar colors it holds the records whose value is ``NaN``, so they never
+    enter the color range. A frame-only record's ``customdata`` pattern
+    identity is `None`, which :func:`selection_from_plotly` reports as a
+    frame selection with no pattern.
     """
     preparation = (
         ("axes", axes),
@@ -178,6 +187,9 @@ def plot_map(
         ("pole_hkl", pole_hkl),
         ("pole_center", pole_center),
         ("pole_color_radius_deg", pole_color_radius_deg),
+        ("orientation_symmetry", orientation_symmetry),
+        ("rodrigues_reference", rodrigues_reference),
+        ("rodrigues_reference_reciprocal", rodrigues_reference_reciprocal),
     )
     data = _prepared_data(source, MapData, "plot_map", preparation)
     if data is None:
@@ -191,11 +203,11 @@ def plot_map(
     figure = go.Figure()
     roles = {"data": [], "unindexed": []}
     dimensions = data.coordinates.shape[1]
-    masks = (
-        (("data", np.ones(len(data.frame_ids), dtype=bool)),)
-        if data.color_kind == "scalar"
-        else (("data", data.indexed), ("unindexed", ~data.indexed))
-    )
+    if data.color_kind == "scalar":
+        shown = np.isfinite(data.colors)
+    else:
+        shown = data.indexed
+    masks = (("data", shown), ("unindexed", ~shown))
     for role, mask in masks:
         if not np.any(mask):
             continue
@@ -213,9 +225,10 @@ def plot_map(
             })
             if data.color_limits is not None:
                 marker["cmin"], marker["cmax"] = data.color_limits
+        patterns = [None if value < 0 else int(value) for value in data.pattern_indices[mask]]
         customdata = _customdata(
             [data.frame_ids[index] for index in np.flatnonzero(mask)],
-            data.pattern_indices[mask],
+            patterns,
         )
         common = {
             "mode": "markers",
@@ -224,12 +237,16 @@ def plot_map(
             "customdata": customdata,
             "meta": {"role": role},
             "uid": f"map-{role}",
-            "hovertemplate": (
-                "frame: %{customdata[0]}<br>pattern: %{customdata[1]}<br>"
-                + (f"{data.color_label}: %{{marker.color:.4g}}<br>" if data.color_kind == "scalar" and role == "data" else "")
-                + "<extra></extra>"
-            ),
         }
+        if role == "unindexed":
+            common["text"] = ["none" if value is None else str(value) for value in patterns]
+            common["hovertemplate"] = "frame: %{customdata[0]}<br>pattern: %{text}<extra></extra>"
+        else:
+            common["hovertemplate"] = (
+                "frame: %{customdata[0]}<br>pattern: %{customdata[1]}<br>"
+                + (f"{data.color_label}: %{{marker.color:.4g}}<br>" if data.color_kind == "scalar" else "")
+                + "<extra></extra>"
+            )
         coordinates = data.coordinates[mask]
         trace = (
             go.Scattergl(x=coordinates[:, 0], y=coordinates[:, 1], **common)

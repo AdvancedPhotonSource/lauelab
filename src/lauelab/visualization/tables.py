@@ -65,14 +65,11 @@ def _selected_pattern_rows(dataset, scope):
 
 def _selected_frame_mask(dataset, scope):
     scope = scope or DataScope()
-    if scope.patterns == "all_frames":
-        mask = np.ones(dataset.n_frames, dtype=bool)
-        if scope.min_detected is not None:
-            mask &= dataset.frame_n_peaks >= scope.min_detected
-        return mask
     rows = _selected_pattern_rows(dataset, scope)
     mask = np.zeros(dataset.n_frames, dtype=bool)
     mask[dataset.pattern_frame_indices[rows]] = True
+    if scope.includes_unindexed_frames:
+        mask |= scope.unindexed_frame_mask(dataset)
     return mask
 
 

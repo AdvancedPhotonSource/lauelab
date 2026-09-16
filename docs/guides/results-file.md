@@ -36,28 +36,69 @@ with indexer.results_writer("results.h5") as writer:
         writer.append(result, frame_id=path.stem)
 ```
 
+`append()` checks the result type and the frame identity before it writes anything, so a rejected argument (a repeated identity, for example) raises and leaves the writer usable. If a write itself fails, including because the result's content is malformed, the file holds a partially appended frame and the writer refuses further appends: `writer.failed` is `True` and `writer.error` holds the exception. There is no recovery from that state; the run must be written again from the start. Validate a file before you rely on it, as described below, and stop the run when the HDF5 writer fails: it is the authoritative output.
+
+(results-file-xml-alongside)=
+### Write XML alongside
+
+{class}`~lauelab.indexing.XmlResultsWriter` appends each result to one LaueGo `AllSteps` document as it arrives, with the same bytes `Indexer.write_many_xml()` would produce and without holding earlier steps in memory. Feed both writers from one stream of results:
+
+```python
+import warnings
+
+from lauelab.indexing import XmlResultsWriter
+
+with indexer.results_writer("results.h5") as writer, \
+        XmlResultsWriter("results.xml") as xml:
+    for path in frames:
+        result = indexer.index(path, keep_image=False)
+        writer.append(result, frame_id=path.stem)
+        if not xml.failed:
+            try:
+                xml.append(result)
+            except OSError as error:
+                warnings.warn(f"XML output stopped: {error}")
+```
+
+The XML document is auxiliary: a failure there is a warning about the XML alone, and the results file is unaffected. Each step is flushed as it is written. After a failed append the XML writer refuses more steps and, on close, truncates the file back to the last complete step and writes the closing tag when the filesystem allows, so the document is well formed up to that step. A failure of the HDF5 writer, by contrast, ends the run.
+
+(results-file-validate)=
+## Validate a results file
+
+{func}`~lauelab.indexing.validate_results_file` checks a closed file's structure with bounded reads and returns a {class}`~lauelab.indexing.ResultsFileSummary`:
+
+```python
+from lauelab.indexing import validate_results_file
+
+summary = validate_results_file("results.h5", frame_ids=[path.stem for path in frames])
+print(summary.n_frames, summary.n_peaks, summary.n_patterns)
+```
+
+It verifies the format marker and version, that every dataset of the layout exists with the right dtype and shape, that the per-frame, per-peak, per-pattern, and per-assignment datasets agree in length, that each offsets dataset partitions its rows, that the recorded counts match the offsets, that pattern ranks restart at zero in every frame, and that frame identities are unique. Pass `frame_ids` or `n_frames` to compare the file against a run manifest; a mismatch names the first differing frame. Assignment peak indices are read in bounded chunks and must refer to peaks in their owning frame. Peak values, reciprocal lattices, and other assignment arrays are not read.
+
+A structural defect raises {class}`~lauelab.indexing.InvalidResultsFile` with the file path and the failing check. {func}`lauelab.is_results_file` reads only the format marker; a file interrupted while being written still carries the marker, so use the validator before treating a file as complete. A valid file can describe a run that stopped early: completeness of the run is the caller's bookkeeping, not a property of the file.
+
 (results-file-process-pool)=
 ### Write from a process pool
 
-`Indexer` is not picklable, so each worker constructs its own. A `FrameResult` is picklable, so workers can return results to one writer:
+{meth}`~lauelab.indexing.Indexer.iter_index` runs frames in worker processes and yields outcomes in input order, so one writer can append them as they arrive:
 
 ```python
-from multiprocessing import Pool
+from lauelab.indexing import FrameInput
 
-def index_one(path):
-    global indexer
-    try:
-        indexer
-    except NameError:
-        indexer = Indexer("geometry.xml", "crystal.xml")
-    return indexer.index(path, keep_image=False)
+inputs = [FrameInput(path, input_id=path.stem) for path in frames]
+failures = []
 
-with Pool(8) as pool, indexer.results_writer("results.h5") as writer:
-    for path, result in zip(frames, pool.imap(index_one, frames)):
-        writer.append(result, frame_id=path.stem)
+with indexer.iter_index(inputs, workers=8) as outcomes, \
+        indexer.results_writer("results.h5") as writer:
+    for outcome in outcomes:
+        if outcome.ok:
+            writer.append(outcome.result, frame_id=outcome.input_id)
+        else:
+            failures.append((outcome.input_id, outcome.error))
 ```
 
-`Pool.imap()` preserves input order. Pass `keep_image=False` in the worker; a retained image adds one detector-sized array to every result sent between processes.
+Results arrive without images by default, so only peaks, patterns, and provenance cross between processes. See [Batch indexing](batch-indexing.md) for the in-flight bound, error handling, and cooperative stopping.
 
 ## Load a results file
 
@@ -86,6 +127,10 @@ output = convert_xml("indexed-scan.xml")
 
 An existing output raises `FileExistsError` unless you pass `output_path` or `overwrite=True`. Conversion costs one XML load, so convert once and load the results file afterwards.
 
+The converter writes to a unique `<destination>.partial-*` file in the same directory, closes and validates that file, and only then renames it into place, so a reader never opens a half-written results file. If any stage fails, the partial file is removed and an existing destination is untouched; two conversions racing for one destination cannot corrupt each other, and the second to finish raises `FileExistsError` unless `overwrite=True`. The exceptions tell the cases apart: a missing document raises `FileNotFoundError`, a malformed one `xml.etree.ElementTree.ParseError`, conflicting run parameters `ValueError`, and a written file that fails validation {class}`~lauelab.indexing.InvalidResultsFile`. A document without geometry or crystal context converts; `validate_results_file` on the output reports `has_geometry_text` and `has_crystal`.
+
+The same publication step is available for your own outputs: write to {func}`lauelab.partial_path`, validate, then {func}`lauelab.publish_file` renames it to the final name and refuses, by default, to replace a file that appeared in the meantime.
+
 The converter records the geometry path from the XML and embeds the geometry text only when that path is readable. A document without crystal information converts without a crystal, and the loaded dataset then rejects pole figures and orientation colors. Run parameters recorded in the XML become `run` attributes; parameters absent from the XML stay absent, and parameters that conflict between steps raise `ValueError`, so convert separate configurations separately.
 
 ## File contents
@@ -102,6 +147,6 @@ The converter records the geometry path from the XML and embeds the geometry tex
 
 Rows of `peaks`, `patterns`, and `assignments` are grouped by owner. The peaks of frame `i` are rows `peak_offsets[i]` to `peak_offsets[i + 1]`; `pattern_offsets` and `assignment_offsets` follow the same rule.
 
-Reciprocal lattices, cell parameters, atom positions, sample positions, depths, and intensity sums are `numpy.float64`. Other floating-point values are `numpy.float32`, which keeps about seven significant digits, or about 0.0001 px for a coordinate on a 2048-pixel detector. Hutch temperature and sample distance keep the values supplied by acquisition with `units="unspecified"`, because the input metadata does not establish a unit. Missing flags are `-1` and missing floating-point values are `NaN`.
+Reciprocal lattices, cell parameters, atom positions, sample positions, depths, and intensity sums are `numpy.float64`. Other floating-point values are `numpy.float32`, which keeps about seven significant digits, or about 0.0001 px for a coordinate on a 2048-pixel detector. Hutch temperature and sample distance keep the values supplied by acquisition with `units="unspecified"`, because the input metadata does not establish a unit. Missing flags are `-1` and missing floating-point values are `NaN`. In the `run` attributes, a parameter given as `None` is also stored as `NaN`: `threshold` for automatic thresholding, `threshold_ratio` for the native default, and `max_peaks` for an unlimited peak search.
 
 The {ref}`reference <results-file-layout>` lists every dataset with its dtype, shape, and units. Provenance that `VisualizationDataset` does not carry, such as the `run` attributes, is read directly with h5py.

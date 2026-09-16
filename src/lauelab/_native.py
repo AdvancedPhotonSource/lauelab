@@ -20,7 +20,8 @@ ffi.cdef(
         LAUE_RECON_EDGE_BOTH = -1,
         LAUE_POSITIONER_NONE = 0, LAUE_POSITIONER_PM500 = 1,
         LAUE_POSITIONER_ALIO = 2,
-        LAUE_PIXEL_U16 = 0, LAUE_PIXEL_F64 = 1
+        LAUE_PIXEL_U16 = 0, LAUE_PIXEL_F64 = 1, LAUE_PIXEL_I32 = 2,
+        LAUE_PIXEL_F32 = 3, LAUE_PIXEL_I16 = 4, LAUE_PIXEL_U8 = 5, LAUE_PIXEL_I8 = 6
     };
     typedef struct { char name[60]; double x, y, z, occupancy; } laue_atom;
     typedef struct {
@@ -81,6 +82,7 @@ ffi.cdef(
     double laue_recon_depth_um(const laue_recon *, int);
     const char *laue_recon_last_error(const laue_recon *);
     void laue_recon_free(laue_recon *);
+    int laue_find_peaks_typed(const void *, int, int, int, const laue_peak_params *, laue_frame_result *);
     int laue_find_peaks(const unsigned short *, int, int, const laue_peak_params *, laue_frame_result *);
     int laue_pixels_to_q(const laue_geometry *, int, laue_frame_result *);
     int laue_index(const laue_crystal *, const laue_index_params *, laue_frame_result *);

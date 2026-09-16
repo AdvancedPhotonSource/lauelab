@@ -584,7 +584,15 @@ def test_reciprocal_convention_is_consistent_across_live_xml_and_visualization(
         measured = result.peaks["qhat"][pattern.pk_index]
         cosine = np.clip(np.sum(calculated * measured, axis=1), -1, 1)
         angles = np.degrees(np.arccos(cosine))
-        np.testing.assert_allclose(angles, pattern.err_deg, atol=2e-8, rtol=0)
+        # The native indexer and this NumPy recomputation differ in how they
+        # normalize and accumulate before the arccos, which near 0.1 degree
+        # amplifies a ~1e-13 cosine difference to ~2e-8 degrees. Observed
+        # deviations reach 2.05e-8 degrees on the synthetic frames, so the
+        # earlier 2e-8 tolerance sat at the noise level and failed on other
+        # hosts. 5e-8 degrees (about 1e-9 radians) still verifies the
+        # convention: a wrong basis or a missing 2*pi would be off by degrees,
+        # and the indexing tolerance itself is 0.1 degree.
+        np.testing.assert_allclose(angles, pattern.err_deg, atol=5e-8, rtol=0)
         assert np.max(angles) < indexer.index_params.angle_tolerance_deg
 
     pattern = result.patterns[0]

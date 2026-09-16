@@ -12,11 +12,22 @@ See [Results files](../guides/results-file.md) for writing, loading, and convert
 .. currentmodule:: lauelab.indexing
 
 .. autoclass:: ResultsWriter
-   :members: append
+   :members: append, failed, count
+
+.. autoclass:: XmlResultsWriter
+   :members: append, close
+
+.. autofunction:: validate_results_file
+
+.. autoclass:: ResultsFileSummary
 
 .. currentmodule:: lauelab
 
 .. autofunction:: is_results_file
+
+.. autofunction:: partial_path
+
+.. autofunction:: publish_file
 ```
 
 (results-file-layout)=

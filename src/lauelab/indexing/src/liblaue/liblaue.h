@@ -64,9 +64,17 @@ typedef enum {
     LAUE_POSITIONER_ALIO = 2
 } laue_positioner;
 
+/* Element type of a borrowed pixel buffer. laue_recon_stripe accepts
+   LAUE_PIXEL_U16 and LAUE_PIXEL_F64; laue_find_peaks_typed accepts every member.
+   Each element is converted to double exactly; nothing is scaled or clipped. */
 typedef enum {
     LAUE_PIXEL_U16 = 0,
-    LAUE_PIXEL_F64 = 1
+    LAUE_PIXEL_F64 = 1,
+    LAUE_PIXEL_I32 = 2,
+    LAUE_PIXEL_F32 = 3,
+    LAUE_PIXEL_I16 = 4,
+    LAUE_PIXEL_U8 = 5,
+    LAUE_PIXEL_I8 = 6
 } laue_pixel_type;
 
 typedef struct {
@@ -93,6 +101,8 @@ typedef struct {
     double threshold;
     double threshold_ratio;
     int peak_shape;
+    /* Positive limit on the number of fitted peaks, or 0 for no limit: every
+       blob above threshold is fitted. Negative values are rejected. */
     int max_peaks;
     int smooth;
     const unsigned char *mask;
@@ -206,6 +216,13 @@ LAUE_API double laue_recon_depth_um(const laue_recon *recon, int index);
 LAUE_API const char *laue_recon_last_error(const laue_recon *recon);
 /* Free recon and its owned memory. NULL is accepted. */
 LAUE_API void laue_recon_free(laue_recon *recon);
+/* Peak search on a borrowed row-major nx x ny frame. pixel_type selects the
+   element type of pixels (any laue_pixel_type member). Frame statistics and
+   fitting use the exact double value of each element. Floating-point frames
+   must be finite; the caller is responsible for that check. */
+LAUE_API int laue_find_peaks_typed(const void *pixels, int pixel_type, int nx, int ny,
+                                   const laue_peak_params *params, laue_frame_result *result);
+/* Convenience form of laue_find_peaks_typed for LAUE_PIXEL_U16 frames. */
 LAUE_API int laue_find_peaks(const unsigned short *pixels, int nx, int ny,
                              const laue_peak_params *params, laue_frame_result *result);
 LAUE_API int laue_pixels_to_q(const laue_geometry *geometry, int detector_index, laue_frame_result *result);

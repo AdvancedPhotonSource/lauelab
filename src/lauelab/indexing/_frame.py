@@ -60,6 +60,19 @@ def read_h5_frame(path: str | Path):
             raise ValueError(f"HDF5 field {name!r} must be an integer")
         return converted
 
+    def finite_real(source, name):
+        # The LaueGo reader takes the first element of a numeric dataset and
+        # treats a non-finite value as "no value".
+        if name not in source:
+            return None
+        values = np.asarray(source[name]).ravel()
+        if values.size == 0:
+            return None
+        if values.dtype.kind not in "iuf":
+            raise ValueError(f"HDF5 field {name!r} must be a real number")
+        value = float(values[0])
+        return value if np.isfinite(value) else None
+
     with h5py.File(path, "r") as source:
         image = source["entry1/data/data"][...]
         shutter = scalar(source, "entry1/microDiffraction/CCDshutter")
@@ -110,5 +123,53 @@ def read_h5_frame(path: str | Path):
             processing["start"] = start
         if all(value is not None for value in group):
             processing["group"] = group
+        depth = finite_real(source, "entry1/depth")
+        if depth is not None:
+            processing["depth"] = depth
 
     return image, metadata, processing
+
+
+def load_mask(path: str | Path) -> np.ndarray:
+    """Load a peak-search mask stored as a 34-ID-E HDF5 image.
+
+    Parameters
+    ----------
+    path
+        HDF5 file whose ``entry1/data/data`` dataset holds the mask image. Any
+        numeric dtype is accepted.
+
+    Returns
+    -------
+    numpy.ndarray
+        Two-dimensional boolean array. `True` marks a pixel excluded from peak
+        search. This follows the LaueGo ``peaksearch -K`` convention: nonzero
+        mask pixels are excluded and zero pixels remain available.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be opened.
+    KeyError
+        If the image dataset is missing.
+    ValueError
+        If the dataset is not a two-dimensional numeric array.
+
+    Notes
+    -----
+    The mask shape is checked against the frame when it is passed to
+    :meth:`Indexer.index`, not here.
+    """
+    try:
+        import h5py
+    except ImportError as error:
+        raise ImportError("h5py is required to read an HDF5 mask") from error
+
+    with h5py.File(path, "r") as source:
+        values = source["entry1/data/data"][...]
+    if values.ndim != 2 or values.dtype.kind not in "iufb":
+        raise ValueError(
+            f"mask {path} must be a two-dimensional numeric image; "
+            f"received shape={values.shape}, dtype={values.dtype}"
+        )
+    return values != 0

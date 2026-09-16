@@ -5,11 +5,22 @@
 from importlib import import_module
 from types import ModuleType
 
-__all__ = ["analysis", "indexing", "is_results_file", "reconstruct", "visualization"]
+from ._publish import partial_path, publish_file
+
+__all__ = [
+    "analysis", "indexing", "is_results_file", "partial_path", "publish_file",
+    "reconstruct", "visualization",
+]
 
 
 def is_results_file(path) -> bool:
-    """Return whether *path* is a lauelab indexing-results HDF5 file."""
+    """Return whether *path* carries the lauelab indexing-results format marker.
+
+    This reads only the root ``format`` attribute. It tells a results file apart
+    from other HDF5 files such as detector frames; it does not check that the
+    file is complete or consistent. Use
+    :func:`lauelab.indexing.validate_results_file` for that.
+    """
     import h5py
 
     from ._results_layout import FORMAT

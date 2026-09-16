@@ -65,6 +65,15 @@ lib.laue_recon_free(ffi.NULL)
 assert lib.laue_find_peaks(ffi.NULL, 1, 1, params, result) == 1
 assert result.status == 1
 assert ffi.string(result.message) == b"invalid peak-search input"
+assert lib.laue_find_peaks_typed(ffi.NULL, lib.LAUE_PIXEL_I32, 1, 1, params, result) == 1
+assert ffi.string(result.message) == b"invalid peak-search input"
+pixel = ffi.new("unsigned short[1]", [5])
+assert lib.laue_find_peaks_typed(pixel, 99, 1, 1, params, result) == 1
+assert ffi.string(result.message) == b"unsupported pixel type 99"
+params.boxsize = params.min_size = params.min_separation = 1
+params.max_peaks = -1
+assert lib.laue_find_peaks(pixel, 1, 1, params, result) == 1
+assert ffi.string(result.message) == b"invalid or unsupported peak-search parameters"
 assert lib.laue_pixels_to_q(ffi.NULL, 0, result) == 1
 assert result.status == 1
 assert ffi.string(result.message) == b"geometry is NULL"
@@ -73,6 +82,7 @@ assert result.status == 1
 assert ffi.string(result.message) == b"invalid indexing input"
 
 assert lib.laue_find_peaks(ffi.NULL, 1, 1, params, ffi.NULL) == 1
+assert lib.laue_find_peaks_typed(ffi.NULL, lib.LAUE_PIXEL_U16, 1, 1, params, ffi.NULL) == 1
 assert lib.laue_pixels_to_q(ffi.NULL, 0, ffi.NULL) == 1
 assert lib.laue_index(ffi.NULL, ffi.NULL, ffi.NULL) == 1
 lib.laue_frame_result_free(result)

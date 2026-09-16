@@ -11,12 +11,17 @@ This submodule contains the core indexing functionality including:
 
 from ._liblaue import DetectorGeometry, Geometry, WireGeometry, load_geometry
 from .crystal import Atom, Cell, Crystal, load_crystal
-from .errors import IndexingError, InputError, LaueError, ReconstructionError
+from .errors import (
+    IndexingError, InputError, InvalidResultsFile, LaueError, NumericalIndexingError, ReconstructionError, WorkerError,
+)
+from ._frame import load_mask
+from .incremental import EXPECTED_INPUT_ERRORS, FrameInput, FrameOutcome, FrameOutcomes
 from .index import IndexingResult, lauego
 from .indexer import (
     FrameMetadata, FrameResult, Indexer, IndexParams, Pattern, PeakParams, index_frame,
 )
-from .results import ResultsWriter
+from .results import ResultsFileSummary, ResultsWriter, validate_results_file
+from .xml_utils import XmlResultsWriter
 
 __all__ = [
     'lauego',
@@ -34,6 +39,7 @@ __all__ = [
     'LaueError',
     'InputError',
     'IndexingError',
+    'NumericalIndexingError',
     'ReconstructionError',
     'PeakParams',
     'IndexParams',
@@ -41,4 +47,14 @@ __all__ = [
     'FrameMetadata',
     'FrameResult',
     'ResultsWriter',
+    'load_mask',
+    'WorkerError',
+    'FrameInput',
+    'FrameOutcome',
+    'FrameOutcomes',
+    'EXPECTED_INPUT_ERRORS',
+    'InvalidResultsFile',
+    'ResultsFileSummary',
+    'validate_results_file',
+    'XmlResultsWriter',
 ]

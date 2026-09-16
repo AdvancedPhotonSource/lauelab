@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tempfile
 import xml.etree.ElementTree as ET
@@ -12,12 +13,14 @@ import h5py
 import numpy as np
 
 from lauelab._hdf5 import check_format_version, write_root_attributes
+from lauelab._publish import partial_path, publish_file
 from lauelab._results_layout import (
     FORMAT, SUPPORTED_VERSIONS, VERSION, write_crystal, write_dataset,
 )
 from lauelab.analysis import lattice_params_to_reciprocal
 from lauelab.indexing import Atom, Cell, Crystal, Geometry
 from lauelab.indexing.indexer import PEAK_DTYPE
+from lauelab.indexing.results import validate_results_file
 
 from .data import VisualizationDataset
 from .xml import load_visualization_xml, orientations_from_reciprocals
@@ -217,15 +220,75 @@ def _child_float(element, name, default=np.nan):
 
 
 def convert_xml(xml_path, output_path=None, *, geometry=None, overwrite=False) -> Path:
-    """Convert a LaueGo ``AllSteps`` XML document to a results HDF5 file."""
+    """Convert a LaueGo ``AllSteps`` XML document to a results HDF5 file.
+
+    Parameters
+    ----------
+    xml_path
+        The ``AllSteps`` document.
+    output_path
+        Destination results file. Defaults to ``xml_path`` with the ``.h5``
+        suffix.
+    geometry
+        Geometry to record instead of the one named in the XML.
+    overwrite
+        Replace an existing destination. The default refuses.
+
+    Returns
+    -------
+    pathlib.Path
+        The published destination.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the XML document does not exist.
+    xml.etree.ElementTree.ParseError
+        If the document is not well-formed XML.
+    ValueError
+        If steps record conflicting run parameters, or the document's
+        content cannot be normalized.
+    FileExistsError
+        If the destination exists and ``overwrite`` is `False`, checked before
+        conversion and again at publication.
+    InvalidResultsFile
+        If the written file fails :func:`~lauelab.indexing.validate_results_file`.
+
+    Notes
+    -----
+    The results file is written under a unique ``<name>.partial-*`` file in
+    the destination's directory, closed, validated, and only then renamed to
+    ``output_path``. A reader never sees a half-written destination, a
+    failure at any stage removes that partial file and leaves an existing
+    destination untouched, and two conversions of the same destination cannot
+    overwrite each other's work: the second to finish fails with
+    ``FileExistsError`` unless ``overwrite`` is set. A document without geometry or crystal context
+    still converts; the summary from ``validate_results_file`` reports what is
+    present.
+    """
     xml_path = Path(xml_path)
     output_path = xml_path.with_suffix(".h5") if output_path is None else Path(output_path)
     if not overwrite and output_path.exists():
         raise FileExistsError(output_path)
     dataset = load_visualization_xml(xml_path, geometry=geometry)
     frame_values, embedded_geometry_path, run_values = _xml_frame_values(xml_path)
-    mode = "w" if overwrite else "x"
-    with h5py.File(output_path, mode) as target:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        dir=output_path.parent, prefix=partial_path(output_path).name + "-", suffix=""
+    )
+    os.close(descriptor)
+    partial = Path(name)
+    try:
+        _write_converted(partial, xml_path, dataset, frame_values, embedded_geometry_path, run_values)
+        validate_results_file(partial)
+        return publish_file(partial, output_path, overwrite=overwrite)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+def _write_converted(output_path, xml_path, dataset, frame_values, embedded_geometry_path, run_values):
+    with h5py.File(output_path, "w") as target:
         write_root_attributes(target, format_name=FORMAT, version=VERSION, source=str(xml_path))
         write_crystal(target, dataset.crystal)
         geometry_group = target.create_group("geometry")
@@ -291,7 +354,6 @@ def convert_xml(xml_path, output_path=None, *, geometry=None, overwrite=False) -
         }
         for name, data in assignment_data.items():
             write_dataset(target, f"/assignments/{name}", data)
-    return output_path
 
 
 def load_results(path, *, geometry=None, frame_ids=None) -> VisualizationDataset:

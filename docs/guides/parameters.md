@@ -23,15 +23,19 @@ Record the complete parameter objects with analysis output. A result alone does 
 
 | Parameter | Default | Units | Effect and constraint |
 |---|---:|---|---|
-| `boxsize` | `5` | px | Half-width of the square fitting region. Must be positive. |
+| `boxsize` | `5` | px | Half-width of the square fitting region. Must be a positive whole number. |
 | `max_rfactor` | `2.0` | dimensionless | Maximum accepted fit residual factor. Must be positive. |
-| `min_size` | `3` | px | Minimum accepted peak size. Must be positive. |
-| `min_separation` | `10` | px | Minimum separation between accepted peaks. Must be positive. |
+| `min_size` | `3` | px | Minimum accepted peak size. Must be a positive whole number. |
+| `min_separation` | `10` | px | Minimum separation between accepted peaks. Must be a positive whole number. |
 | `threshold` | `100.0` | detector counts | Absolute detection threshold. Use `None` for an automatically derived threshold. |
 | `threshold_ratio` | `None` | dimensionless | Scale applied to the frame standard deviation for automatic thresholding. `None` resolves to the native default, `4.0`. |
 | `peak_shape` | `"Lorentzian"` | none | Fit model. Exactly `"Lorentzian"` or `"Gaussian"`. |
-| `max_peaks` | `50` | peaks | Maximum number of returned peaks. Must be positive. |
+| `max_peaks` | `50` | peaks | Maximum number of returned peaks, a positive whole number, or `None` for no limit: every blob above the threshold is fitted. |
 | `smooth` | `False` | none | Applies native image smoothing before detection and fitting. Frame sums continue to describe the raw input image; an automatically derived threshold is computed from the smoothed image. |
+
+Whole-number parameters accept an integral float: `min_size=3.0` is the same as `min_size=3`, and the `Indexer` stores the `int`. A fractional value such as `3.5` raises {class}`~lauelab.indexing.InputError` naming the parameter; nothing is rounded silently.
+
+With `max_peaks=None`, a frame with many blobs takes longer and returns more peaks. XML output then omits the `max_number` attribute, and the results file records `max_peaks` as `NaN`.
 
 When `threshold` is not `None`, `threshold_ratio` does not determine the threshold. When `threshold` is `None`, the native stage calculates the threshold from frame statistics and the resolved `threshold_ratio`. XML provenance records the resolved value (`4.0` when configured as `None`).
 
@@ -43,8 +47,8 @@ When `threshold` is not `None`, `threshold_ratio` does not determine the thresho
 | `kev_max_test` | `35.0` | keV | Maximum energy used when testing candidate reflections. Must be positive. |
 | `angle_tolerance_deg` | `0.12` | deg | Angular matching tolerance. Must be positive. |
 | `cone_deg` | `72.0` | deg | Search-cone angle. Must be positive. |
-| `hkl_prefer` | `(0, 0, 1)` | Miller indices | Preferred direction. Must contain exactly three integers. |
-| `max_data` | `250` | peaks | Maximum detected peaks supplied to orientation indexing. Must be at least two. |
+| `hkl_prefer` | `(0, 0, 1)` | Miller indices | Preferred direction. Must contain exactly three whole numbers. |
+| `max_data` | `250` | peaks | Maximum detected peaks supplied to orientation indexing. Must be a whole number of at least two. |
 
 These fields configure the native orientation search. Their scientifically appropriate values depend on the experiment and crystal. This guide does not prescribe universal tuning values.
 
@@ -78,7 +82,7 @@ Several interactions follow directly from processing behavior:
 
 - `threshold` selects absolute or automatic thresholding.
 - `threshold_ratio` affects automatic thresholding only.
-- `max_peaks` limits the output of peak search.
+- `max_peaks` limits the output of peak search; `None` removes the limit.
 - `max_data` limits how many detected peaks enter orientation indexing.
 - Orientation indexing runs only when a crystal is present and at least two peaks were detected.
 - `start`, `group`, and `depth` affect pixel-to-q conversion rather than peak fitting.

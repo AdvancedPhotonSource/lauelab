@@ -2,6 +2,7 @@
    Full license accessible at https://github.com/AdvancedPhotonSource/lauelab/blob/main/LICENSE */
 #include "liblaue.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -278,8 +279,46 @@ int laue_geometry_wire_info(const laue_geometry *geometry, laue_wire_info *info,
     return LAUE_OK;
 }
 
+static int pixel_type_supported(int pixel_type)
+{
+    switch (pixel_type) {
+    case LAUE_PIXEL_U16:
+    case LAUE_PIXEL_F64:
+    case LAUE_PIXEL_I32:
+    case LAUE_PIXEL_F32:
+    case LAUE_PIXEL_I16:
+    case LAUE_PIXEL_U8:
+    case LAUE_PIXEL_I8:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Exact conversion of one borrowed pixel to double; every supported element
+   type is representable in a double without rounding. */
+static double pixel_value(const void *pixels, int pixel_type, size_t index)
+{
+    switch (pixel_type) {
+    case LAUE_PIXEL_U16: return ((const uint16_t *)pixels)[index];
+    case LAUE_PIXEL_F64: return ((const double *)pixels)[index];
+    case LAUE_PIXEL_I32: return ((const int32_t *)pixels)[index];
+    case LAUE_PIXEL_F32: return ((const float *)pixels)[index];
+    case LAUE_PIXEL_I16: return ((const int16_t *)pixels)[index];
+    case LAUE_PIXEL_U8: return ((const uint8_t *)pixels)[index];
+    case LAUE_PIXEL_I8: return ((const int8_t *)pixels)[index];
+    default: return NAN;
+    }
+}
+
 int laue_find_peaks(const unsigned short *pixels, int nx, int ny,
                     const laue_peak_params *params, laue_frame_result *result)
+{
+    return laue_find_peaks_typed(pixels, LAUE_PIXEL_U16, nx, ny, params, result);
+}
+
+int laue_find_peaks_typed(const void *pixels, int pixel_type, int nx, int ny,
+                          const laue_peak_params *params, laue_frame_result *result)
 {
     WinViewImage image;
     Grid grid;
@@ -308,15 +347,24 @@ int laue_find_peaks(const unsigned short *pixels, int nx, int ny,
         snprintf(result->message, sizeof(result->message), "invalid peak-search input");
         return result->status;
     }
-    if (params->boxsize < 1 || params->min_size < 1 || params->max_peaks < 1 ||
+    if (!pixel_type_supported(pixel_type)) {
+        result->status = LAUE_INVALID_ARGUMENT;
+        snprintf(result->message, sizeof(result->message), "unsupported pixel type %d", pixel_type);
+        return result->status;
+    }
+    /* max_peaks == 0 means no limit; see laue_peak_params. */
+    if (params->boxsize < 1 || params->min_size < 1 || params->max_peaks < 0 ||
         params->min_separation < 1 || (params->peak_shape != 0 && params->peak_shape != 1)) {
         result->status = LAUE_INVALID_ARGUMENT;
         snprintf(result->message, sizeof(result->message), "invalid or unsupported peak-search parameters");
         return result->status;
     }
 
+    /* n_peaks is an int and each peak comes from a distinct blob, so the pixel
+       count must fit an int for an unlimited search to be exactly that. */
     if ((size_t)nx > SIZE_MAX / (size_t)ny ||
-        (size_t)nx * (size_t)ny > SIZE_MAX / sizeof(*values)) {
+        (size_t)nx * (size_t)ny > SIZE_MAX / sizeof(*values) ||
+        (size_t)nx * (size_t)ny > (size_t)INT_MAX) {
         result->status = LAUE_INVALID_ARGUMENT;
         snprintf(result->message, sizeof(result->message), "image dimensions are too large");
         return result->status;
@@ -324,7 +372,7 @@ int laue_find_peaks(const unsigned short *pixels, int nx, int ny,
     count = (size_t)nx * (size_t)ny;
     values = malloc(count * sizeof(*values));
     if (!values) goto allocation_error;
-    for (i = 0; i < count; ++i) values[i] = pixels[i];
+    for (i = 0; i < count; ++i) values[i] = pixel_value(pixels, pixel_type, i);
 
     grid.values = values;
     grid.width = nx;
@@ -371,9 +419,10 @@ int laue_find_peaks(const unsigned short *pixels, int nx, int ny,
         if (params->mask && params->mask[i]) {
             values[i] = average;
         } else {
-            sum += pixels[i];
-            if (pixels[i] > threshold) {
-                sum_above += pixels[i];
+            double raw = pixel_value(pixels, pixel_type, i);
+            sum += raw;
+            if (raw > threshold) {
+                sum_above += raw;
                 ++above;
             }
         }
@@ -398,6 +447,7 @@ int laue_find_peaks(const unsigned short *pixels, int nx, int ny,
         blobs = blobsearch(&grid, threshold, params->min_size, true, &helper_status);
         if (!blobs || helper_status) goto allocation_error;
         if (sorListPoints(blobs)) goto allocation_error;
+        /* processBlobs treats a non-positive limit as no limit. */
         peaks = processBlobs(
             blobs, &image, ginf, params->max_peaks, grid_get_average(&grid), &helper_status
         );

@@ -36,7 +36,7 @@ Batch processing uses `keep_images=False` by default. Each `FrameResult.image` i
 results = indexer.index_many(frames, keep_images=True)
 ```
 
-Retaining images adds the storage of every contiguous `uint16` frame to the result list. Keep them only when later analysis requires direct pixel access.
+Retaining images adds the storage of every contiguous frame to the result list. Keep them only when later analysis requires direct pixel access.
 
 Peak and pattern arrays remain available regardless of image retention.
 
@@ -45,7 +45,7 @@ Peak and pattern arrays remain available regardless of image retention.
 `index_many()` stops at the first exception and does not return its partially built result list. Process frames individually when the application must record a failure and continue:
 
 ```python
-from lauelab.indexing import IndexingError, InputError
+from lauelab.indexing import NumericalIndexingError, InputError
 
 results = []
 failures = []
@@ -53,17 +53,42 @@ failures = []
 for frame in frames:
     try:
         results.append(indexer.index(frame, keep_image=False))
-    except (InputError, IndexingError, MemoryError, OSError, KeyError) as error:
+    except (InputError, NumericalIndexingError, MemoryError) as error:
         failures.append((frame, error))
 ```
 
 Choose the caught exceptions deliberately. For example, an application may stop on `MemoryError` rather than continue with other frames.
 
-## Parallelism boundaries
+## Index in parallel with bounded buffering
 
-`index_many()` is sequential. The public API does not promise thread safety or built-in process parallelism. If an application adds process-level parallelism, each worker should construct and own its `Indexer` until stronger sharing guarantees are documented. `Indexer` is not picklable; `FrameResult` is, so workers can return results to the parent process. {ref}`Write from a process pool <results-file-process-pool>` shows that pattern with a streaming writer.
+`index_many()` is sequential, and calling one `Indexer` from several threads is outside the supported contract. For parallel work use {meth}`~lauelab.indexing.Indexer.iter_index`, which runs frames in spawn-based worker processes and yields one {class}`~lauelab.indexing.FrameOutcome` per input, in input order:
 
-Measure process count and memory use with representative detector frames before using parallel execution in production.
+```python
+from lauelab.indexing import FrameInput
+
+inputs = [FrameInput(path, input_id=path.stem) for path in frames]
+
+with indexer.iter_index(inputs, workers=4) as outcomes:
+    for outcome in outcomes:
+        if outcome.ok:
+            print(outcome.input_id, outcome.result.n_peaks, outcome.result.n_patterns)
+        else:
+            print(outcome.input_id, "failed:", outcome.error)
+```
+
+Each worker builds its own `Indexer` from the parent's geometry path, crystal, parameters, and detector selection; nothing native crosses the process boundary. A {class}`~lauelab.indexing.FrameInput` carries the frame, an optional stable `input_id`, and the per-frame `start`, `group`, `depth`, and `metadata` values of `index()`. A shared `mask` is passed once to `iter_index()` and sent to each worker once. Plain paths or arrays are accepted in place of `FrameInput` when no identity or per-frame values are needed.
+
+The window of submitted-but-unconsumed inputs is bounded by `max_in_flight` (default `2 * workers`). A slow early frame therefore holds back at most that many later results, and no further inputs are admitted until it is consumed. Results come back without images unless `keep_images=True`.
+
+An expected input problem, one of {data}`~lauelab.indexing.EXPECTED_INPUT_ERRORS`, becomes an outcome with `error` set and the iteration continues. A processed frame with no peaks or no patterns is a successful outcome. A worker that cannot initialize, an unexpected exception inside a worker, or a killed worker raises {class}`~lauelab.indexing.WorkerError` from the iteration instead; that run cannot continue.
+
+Pass `should_stop` to stop cooperatively. It is polled before each submission and at least every `poll_seconds` while waiting. Once it returns `True`, no further inputs are admitted, unstarted inputs are withdrawn, frames already running finish and are yielded, and the iteration ends with `outcomes.stopped` set. The executor keeps up to `workers + 1` submitted inputs ready to start, so that many inputs can still run and be yielded after a stop even though they had not started when it was requested. `n_submitted`, `n_yielded`, and `n_cancelled` on the outcomes object say how far the run got; inputs that were never started produce no outcome.
+
+Always iterate inside the `with` block. Leaving it, including through a `break` or an exception in your loop body, shuts the workers down. Because the workers use the `spawn` start method, a script that calls `iter_index()` at module level needs the usual `if __name__ == "__main__":` guard.
+
+`iter_index()` schedules computation only. Writing results, recording failures, and deciding what to do after a stop stay with the caller; {ref}`Write from a process pool <results-file-process-pool>` shows it feeding a streaming writer.
+
+Measure process count and memory use with representative detector frames before choosing `workers` for production. `tests/perf_testing/run_iter_index_perf.py` reports wall time and peak resident memory of the parent and workers on the synthetic frames.
 
 ## Write combined output
 
@@ -81,7 +106,7 @@ Write a LaueGo XML document when other software requires that format:
 indexer.write_many_xml(results, "indexed-scan.xml")
 ```
 
-The XML destination is replaced if it exists. A result constructed manually without an XML snapshot raises `RuntimeError`.
+The XML destination is replaced if it exists. A result constructed manually without an XML snapshot raises `RuntimeError`. Results are serialized one at a time, so the call does not hold the whole document in memory; to write XML while indexing, use {class}`~lauelab.indexing.XmlResultsWriter` as shown in {ref}`Write XML alongside <results-file-xml-alongside>`.
 
 ## Measure performance
 

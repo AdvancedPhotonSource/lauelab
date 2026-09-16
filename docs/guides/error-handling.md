@@ -9,17 +9,19 @@ The in-process API separates invalid input from native processing failures. Catc
 - {class}`~lauelab.indexing.InputError` inherits from both `LaueError` and `ValueError`.
 - {class}`~lauelab.indexing.IndexingError` inherits from both `LaueError` and `RuntimeError`.
 - {class}`~lauelab.indexing.ReconstructionError` inherits from both `LaueError` and `RuntimeError`.
+- {class}`~lauelab.indexing.WorkerError` inherits from both `LaueError` and `RuntimeError`.
+- {class}`~lauelab.indexing.InvalidResultsFile` inherits from both `LaueError` and `ValueError`.
 - Native allocation failures use Python's built-in {class}`MemoryError`.
 
-`ValueError`, XML parse errors, `OSError`, and `KeyError` can also occur while loading geometry, crystal, or HDF5 input. See the relevant API reference for each loader.
+`ValueError`, XML parse errors, `OSError`, and `KeyError` can also occur when calling geometry, crystal, or HDF5 loaders directly. `Indexer.index` normalizes HDF5 reading failures to `InputError`, with the original exception as its cause. See the relevant API reference for each loader.
 
 ## Invalid input
 
 `InputError` reports invalid processing configuration, including:
 
-- Peak or indexing parameters outside supported ranges
+- Peak or indexing parameters outside supported ranges, or a fractional value such as `min_size=3.5` where a whole number is required
 - An unknown detector identifier or inactive detector slot
-- A frame that is not a two-dimensional `uint16` array
+- A frame that is not a two-dimensional array of a supported dtype, or a floating-point frame with non-finite values
 - Invalid `start`, `group`, or `depth`
 - A frame region outside detector bounds
 - A mask shape that does not match the frame
@@ -48,11 +50,21 @@ Do not assume that immediate retry will succeed. Release unneeded arrays and res
 
 ## Native indexing failure
 
-`IndexingError` reports numerical or internal failures in a native processing stage. Its message begins with the stage name, such as `pixel-to-q conversion failed` or `orientation indexing failed`.
+`NumericalIndexingError`, a subclass of `IndexingError`, reports native numerical failures for one frame. Other `IndexingError` exceptions report internal failures in a native processing stage. Its message begins with the stage name, such as `pixel-to-q conversion failed` or `orientation indexing failed`.
 
 Preserve the complete message. It can distinguish a geometry conversion problem from an orientation-indexing problem without exposing native status values as a public API.
 
 No peaks or no patterns is not a failure and does not raise an exception. Apply a separate scientific acceptance policy to those results.
+
+## Parallel indexing
+
+An exception in {data}`~lauelab.indexing.EXPECTED_INPUT_ERRORS` (`InputError`, `NumericalIndexingError`, or `MemoryError`) is returned in `FrameOutcome.error` and the next input is processed. `Indexer.index` wraps unreadable or malformed HDF5 input as `InputError`, preserving the underlying exception as its cause. Other `IndexingError` failures and bare `ValueError`, `KeyError`, or `OSError` raised elsewhere are fatal worker errors. Decide per outcome whether to continue after `MemoryError`; an application may treat it as a reason to stop.
+
+`WorkerError` means the run itself failed: a worker could not build its indexer, a worker raised an exception outside the expected set, or the pool broke because a process died. The message names the input where possible and includes the worker traceback. The iteration cannot continue after it; the workers are shut down before it propagates.
+
+## Output files
+
+A {class}`~lauelab.indexing.ResultsWriter` whose write raised stays failed; further appends raise `RuntimeError`, and the file is not a valid results file. {func}`~lauelab.indexing.validate_results_file` raises `InvalidResultsFile` for such a file and for any other structural defect; a file that cannot be opened raises `OSError`. An {class}`~lauelab.indexing.XmlResultsWriter` failure concerns the auxiliary XML document only. See [Results files](results-file.md).
 
 ## Reconstruction failure
 

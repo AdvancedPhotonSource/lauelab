@@ -218,3 +218,21 @@ def test_closest_pole_colors_and_keys():
     assert cubic_ipf_key(16).shape == (16, 16, 4)
     assert hsv_key(16).shape == (16, 16, 4)
     assert pole_color_radius((0, 0), 45) == pytest.approx(np.tan(np.radians(22.5)))
+
+
+def test_rodrigues_of_near_identity_noise_is_zero_not_180_degrees():
+    # A rotation multiplied by its own inverse is identity up to 1e-16 noise;
+    # arccos amplifies that to an angle near 1e-8, which must not be taken for
+    # a 180-degree rotation with a tiny axis.
+    from lauelab.analysis.orientation import _rotation_matrix
+
+    rotation = _rotation_matrix([0.3, -0.7, 1.0], 37.0)
+    noisy = rotation @ np.linalg.inv(rotation)
+    assert not np.array_equal(noisy, np.eye(3))
+
+    vectors = orientation_to_rodrigues(np.stack([noisy, np.eye(3), _rotation_matrix([1, 0, 0], 180.0)]))
+
+    np.testing.assert_array_equal(vectors[0], 0.0)
+    np.testing.assert_array_equal(vectors[1], 0.0)
+    assert np.linalg.norm(vectors[2]) > 1e6
+    np.testing.assert_array_equal(orientation_to_rodrigues(misorientation_matrix(rotation, rotation)), 0.0)

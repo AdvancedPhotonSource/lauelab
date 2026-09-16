@@ -70,11 +70,18 @@ class DataScope:
         Minimum number of indexed assignments required for a selected pattern.
     min_detected
         Optional minimum number of detected peaks required for its frame.
+    unindexed_frames
+        Also select frames left with no selected pattern, as frame-only
+        records: maps place them as gray points and frame-based tables keep
+        their peaks. ``patterns="all_frames"`` implies this. Such a frame has a
+        real frame identity and no pattern identity; nothing is invented for
+        it.
     """
 
     patterns: PatternSelection = "best"
     min_indexed: int = 3
     min_detected: int | None = None
+    unindexed_frames: bool = False
 
     def __post_init__(self):
         patterns = self.patterns
@@ -98,6 +105,30 @@ class DataScope:
         object.__setattr__(self, "min_indexed", _nonnegative_integer(self.min_indexed, "min_indexed"))
         if self.min_detected is not None:
             object.__setattr__(self, "min_detected", _nonnegative_integer(self.min_detected, "min_detected"))
+        if not isinstance(self.unindexed_frames, (bool, np.bool_)):
+            raise ValueError("unindexed_frames must be a boolean")
+        object.__setattr__(self, "unindexed_frames", bool(self.unindexed_frames))
+
+    @property
+    def includes_unindexed_frames(self) -> bool:
+        """Whether frames with no selected pattern are part of the selection."""
+        return self.unindexed_frames or self.patterns == "all_frames"
+
+    def unindexed_frame_mask(self, dataset: "VisualizationDataset") -> np.ndarray:
+        """Return a mask of frames with no pattern selected by this scope.
+
+        A frame is unindexed here when none of its patterns passes
+        :meth:`pattern_mask`, whether it has no patterns at all or every
+        pattern was filtered out. ``min_detected`` applies to these frames
+        as well. The mask does not depend on ``unindexed_frames``; callers
+        consult :attr:`includes_unindexed_frames` to decide whether to use it.
+        """
+        mask = np.ones(dataset.n_frames, dtype=bool)
+        rows = np.flatnonzero(self.pattern_mask(dataset))
+        mask[dataset.pattern_frame_indices[rows]] = False
+        if self.min_detected is not None:
+            mask &= dataset.frame_n_peaks >= self.min_detected
+        return mask
 
     def pattern_mask(self, dataset: "VisualizationDataset") -> np.ndarray:
         """Return a mask selecting pattern rows from a dataset."""

@@ -35,6 +35,9 @@ See [Visualization data](../guides/visualization.md) for workflows, coordinate c
 .. autoclass:: ScalarColor
 
 .. autoclass:: MapData
+   :members: has_pattern
+
+.. autodata:: NO_PATTERN
 
 .. autoclass:: PoleFigureData
 

@@ -113,6 +113,11 @@ def orientation_to_rodrigues(rotation):
     chosen positive. Unlike the Laue Portal's zero-vector fallback, this retains
     a deterministic axis and decodes to approximately 180 degrees. A matrix
     with a non-finite entry maps to a vector of ``NaN``.
+
+    A matrix within floating-point noise of the identity maps to the zero
+    vector. Its antisymmetric part is as small as that of a 180-degree
+    rotation, so the two are told apart by the trace (near 3 against near
+    -1), not by the recovered angle, which ``arccos`` amplifies near 1.
     """
     rotation = np.asarray(rotation, dtype=float)
     if rotation.shape[-2:] != (3, 3):
@@ -128,13 +133,16 @@ def orientation_to_rodrigues(rotation):
         stack[:, 1, 0] - stack[:, 0, 1],
     ], axis=1)
     norm = np.linalg.norm(axis, axis=1)
-    identity = finite & (angle < 1e-12)
-    generic = finite & ~identity & (norm >= 1e-8)
+    small_axis = norm < 1e-8
+    # A tiny antisymmetric part means an angle near 0 or near 180 degrees;
+    # the trace separates the two (near 3 against near -1).
+    identity = finite & ((angle < 1e-12) | (small_axis & (trace > 1.0)))
+    generic = finite & ~identity & ~small_axis
     result[identity] = 0.0
     result[generic] = (
         axis[generic] / norm[generic, None] * np.tan(angle[generic] / 2.0)[:, None]
     )
-    for index in np.flatnonzero(finite & ~identity & (norm < 1e-8)):
+    for index in np.flatnonzero(finite & ~identity & small_axis):
         values, vectors = np.linalg.eigh(stack[index] + np.eye(3))
         near_axis = vectors[:, np.argmax(values)]
         first = np.flatnonzero(np.abs(near_axis) > 1e-12)

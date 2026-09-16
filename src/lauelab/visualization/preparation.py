@@ -16,11 +16,13 @@ from lauelab.analysis import (
     closest_pole_colors,
     cubic_hkl_family,
     cubic_ipf_colors,
+    lattice_params_to_reciprocal,
     misorientation_matrix,
     orientation_to_rodrigues,
     crystal_direction,
     pole_color_radius,
     pole_figure_points,
+    reciprocal_to_orientation,
     rodrigues_colors,
     simulate_reflections,
     symmetry_operations,
@@ -38,6 +40,10 @@ _POLE_COLOR_VALUES = tuple(choice.value for choice in POLE_COLOR_MODES)
 
 Values = np.ndarray | Callable[[VisualizationDataset], np.ndarray]
 Alignment = Literal["frame", "pattern", "selected"]
+SymmetryChoice = Literal["auto", "cubic", "hexagonal", "none"]
+_SYMMETRY_CHOICES = ("auto", "cubic", "hexagonal", "none")
+NO_PATTERN = -1
+"""Pattern index of a frame-only map record, a frame with no selected pattern."""
 
 
 @dataclass(frozen=True)
@@ -76,7 +82,37 @@ class ScalarColor:
 
 @dataclass(frozen=True)
 class MapData:
-    """Prepared records for a two- or three-dimensional spatial map."""
+    """Prepared records for a two- or three-dimensional spatial map.
+
+    Parameters
+    ----------
+    coordinates
+        Record positions with shape ``(n, 2)`` or ``(n, 3)``.
+    axis_labels
+        One label per coordinate column.
+    frame_ids
+        Frame identity of each record.
+    pattern_indices
+        Frame-local pattern rank of each record, or :data:`NO_PATTERN` for a
+        frame-only record produced by a scope with ``unindexed_frames``. Such
+        a record has a real frame identity and no pattern identity.
+    colors
+        Scalar values with shape ``(n,)`` or RGB rows with shape ``(n, 3)``. A
+        frame-only record has ``NaN`` for pattern-based colors; renderers draw
+        it gray and exclude it from scalar color ranges.
+    color_kind, color_label, palette, color_limits
+        Color metadata for renderers.
+    indexed
+        `True` where the record is a pattern with a finite orientation. It is
+        `False` both for frame-only records and for patterns whose orientation
+        could not be derived; ``has_pattern`` tells the two apart.
+    spatial_axes
+        Whether every axis is a built-in spatial axis, so renderers may lock
+        the aspect ratio.
+    symmetry
+        Symmetry reduction applied to orientation colors: ``"cubic"``,
+        ``"hexagonal"``, or ``"none"``; `None` for colors that use none.
+    """
 
     coordinates: np.ndarray
     axis_labels: tuple[str, ...]
@@ -89,6 +125,7 @@ class MapData:
     color_limits: tuple[float, float] | None = None
     indexed: np.ndarray | None = None
     spatial_axes: bool = True
+    symmetry: str | None = None
 
     def __post_init__(self):
         count = len(self.frame_ids)
@@ -100,11 +137,17 @@ class MapData:
         if len(self.axis_labels) != coordinates.shape[1]:
             raise ValueError("axis_labels must align with coordinate columns")
         patterns = _readonly(self.pattern_indices, dtype=int, shape=(count,), name="pattern_indices")
+        if np.any(patterns < NO_PATTERN):
+            raise ValueError("pattern_indices must be nonnegative ranks or NO_PATTERN")
         colors = _readonly(self.colors, name="colors")
         expected = (count,) if self.color_kind == "scalar" else (count, 3)
         if colors.shape != expected:
             raise ValueError(f"colors must have shape {expected}")
-        indexed = np.ones(count, dtype=bool) if self.indexed is None else self.indexed
+        indexed = np.ones(count, dtype=bool) if self.indexed is None else np.asarray(self.indexed, dtype=bool)
+        if indexed.shape == (count,) and np.any(indexed & (patterns == NO_PATTERN)):
+            raise ValueError("a frame-only record cannot be indexed")
+        if self.symmetry is not None and self.symmetry not in ("cubic", "hexagonal", "none"):
+            raise ValueError("symmetry must be 'cubic', 'hexagonal', 'none', or None")
         object.__setattr__(self, "coordinates", coordinates)
         object.__setattr__(self, "pattern_indices", patterns)
         object.__setattr__(self, "colors", colors)
@@ -112,6 +155,10 @@ class MapData:
         object.__setattr__(self, "frame_ids", tuple(self.frame_ids))
         object.__setattr__(self, "axis_labels", tuple(self.axis_labels))
 
+    @property
+    def has_pattern(self) -> np.ndarray:
+        """`True` where a record is a pattern rather than a frame-only record."""
+        return self.pattern_indices != NO_PATTERN
 
 @dataclass(frozen=True)
 class PoleFigureData:
@@ -300,7 +347,8 @@ def _frame_axis(dataset, name):
     return values, labels[name]
 
 
-def _aligned_values(values, dataset, rows, alignment, name):
+def _aligned_values(values, dataset, rows, frames, alignment, name):
+    """Return one value per record: the selected pattern rows, then frame-only records."""
     values = values(dataset) if callable(values) else values
     array = np.asarray(values)
     if array.ndim != 1:
@@ -308,23 +356,27 @@ def _aligned_values(values, dataset, rows, alignment, name):
     if alignment == "frame":
         if len(array) != dataset.n_frames:
             raise ValueError(f"{name} values must contain one value per frame")
-        return array[dataset.pattern_frame_indices[rows]]
+        return array[np.concatenate([dataset.pattern_frame_indices[rows], frames]).astype(int)]
     if alignment == "pattern":
         if len(array) != dataset.n_patterns:
             raise ValueError(f"{name} values must contain one value per pattern")
-        return array[rows]
-    if len(array) != len(rows):
-        raise ValueError(f"{name} values must contain one value per selected pattern")
+        selected = array[rows]
+        if len(frames):
+            # Pattern-aligned values do not exist for a frame without a pattern.
+            selected = np.concatenate([selected.astype(float), np.full(len(frames), np.nan)])
+        return selected
+    if len(array) != len(rows) + len(frames):
+        raise ValueError(f"{name} values must contain one value per selected record")
     return array
 
 
-def _resolve_axis(axis, dataset, rows):
+def _resolve_axis(axis, dataset, rows, frames):
     if isinstance(axis, str):
         values, label = _frame_axis(dataset, axis)
-        return values[dataset.pattern_frame_indices[rows]], label
+        return values[np.concatenate([dataset.pattern_frame_indices[rows], frames]).astype(int)], label
     if not isinstance(axis, Axis):
         raise TypeError("axes must contain names or Axis objects")
-    values = _aligned_values(axis.values, dataset, rows, axis.alignment, "axis")
+    values = _aligned_values(axis.values, dataset, rows, frames, axis.alignment, "axis")
     label = f"{axis.label} ({axis.unit})" if axis.unit else axis.label
     return values, label
 
@@ -358,16 +410,101 @@ def _crystal_directions(rotations, normal):
     return directions
 
 
+def _symmetry_operations(dataset, orientation_symmetry):
+    """Return ``(operations, name)`` for a symmetry choice; ``name`` is what was applied."""
+    if orientation_symmetry == "auto":
+        crystal = dataset.crystal
+        if crystal is not None and crystal.crystal_system in ("cubic", "hexagonal"):
+            return symmetry_operations(crystal.space_group), crystal.crystal_system
+        return None, "none"
+    if orientation_symmetry in ("cubic", "hexagonal"):
+        return symmetry_operations(orientation_symmetry), orientation_symmetry
+    if orientation_symmetry == "none":
+        return None, "none"
+    raise ValueError(
+        f"unknown orientation_symmetry {orientation_symmetry!r}; choose from {_SYMMETRY_CHOICES}"
+    )
+
+
+def _reference_rotation(dataset, identity, name):
+    """Return the finite orientation of the pattern identified by ``(frame_id, pattern_index)``."""
+    try:
+        frame_id, pattern_index = identity
+        row = next(
+            row
+            for row in range(dataset.n_patterns)
+            if dataset.frame_ids[dataset.pattern_frame_indices[row]] == frame_id
+            and dataset.pattern_indices[row] == pattern_index
+        )
+    except (TypeError, ValueError, StopIteration) as error:
+        raise ValueError(f"{name} must identify a pattern as (frame_id, pattern_index)") from error
+    rotation = dataset.pattern_rotations[row]
+    if not np.isfinite(rotation).all():
+        raise ValueError(f"{name} pattern {(frame_id, int(pattern_index))!r} has no finite orientation")
+    return rotation
+
+
+def _crystal_reference_reciprocal(crystal):
+    """The native reference basis of ``crystal`` as rows a*, b*, c* in 1/nm with 2*pi."""
+    cell = crystal.cell.in_angstrom
+    return lattice_params_to_reciprocal(
+        cell.a / 10.0, cell.b / 10.0, cell.c / 10.0, cell.alpha, cell.beta, cell.gamma,
+        space_group=crystal.space_group,
+    )
+
+
+def _custom_reference_rotation(dataset, matrix):
+    if dataset.crystal is None:
+        raise ValueError("crystal context is required for rodrigues_reference_reciprocal")
+    reference = np.asarray(matrix, dtype=float)
+    if reference.shape != (3, 3) or not np.isfinite(reference).all():
+        raise ValueError(
+            "rodrigues_reference_reciprocal must be a finite 3x3 matrix with rows a*, b*, c* in 1/nm"
+        )
+    condition = np.linalg.cond(reference)
+    if not np.isfinite(condition) or condition > 1e12:
+        raise ValueError("rodrigues_reference_reciprocal is singular")
+    rotation = reciprocal_to_orientation(reference, _crystal_reference_reciprocal(dataset.crystal))
+    # The orientation of a lattice with the crystal's own metric is a rotation.
+    # Anything else means different units or a different cell, which would be
+    # colored as if it were a misorientation.
+    if np.abs(rotation @ rotation.T - np.eye(3)).max() > 1e-2:
+        raise ValueError(
+            "rodrigues_reference_reciprocal does not describe this crystal's lattice; "
+            "expected rows a*, b*, c* in 1/nm including 2*pi with the crystal's cell"
+        )
+    if not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-2, rtol=0):
+        raise ValueError(
+            "rodrigues_reference_reciprocal must describe a proper rotation "
+            "(determinant +1), not a reflection"
+        )
+    return rotation
+
+
+def _with_frame_records(colors, frames):
+    """Append NaN color rows for frame-only records."""
+    if not len(frames):
+        return colors
+    colors = np.asarray(colors, dtype=float)
+    padding = np.full((len(frames),) + colors.shape[1:], np.nan)
+    return np.concatenate([colors, padding])
+
+
 def _map_colors(
     color,
     dataset,
     rows,
+    frames,
     surface,
     misorientation_reference,
     pole_hkl,
     pole_center,
     pole_color_radius_deg,
+    orientation_symmetry,
+    rodrigues_reference,
+    rodrigues_reference_reciprocal,
 ):
+    """Return ``(colors, kind, label, palette, limits, symmetry)`` for all records."""
     scalar_fields = {
         "n_indexed": (dataset.pattern_n_indexed, "Indexed peaks"),
         "goodness": (dataset.pattern_goodness, "Goodness"),
@@ -385,15 +522,16 @@ def _map_colors(
                 raise ValueError(f"unknown scalar color {color.values!r}; choose from {tuple(scalar_fields)}")
             values, default_label = scalar_fields[color.values]
             alignment = "frame" if color.values == "n_patterns" else "pattern"
-            values = _aligned_values(values, dataset, rows, alignment, "color")
+            values = _aligned_values(values, dataset, rows, frames, alignment, "color")
         else:
-            values = _aligned_values(color.values, dataset, rows, color.alignment, "color")
+            values = _aligned_values(color.values, dataset, rows, frames, color.alignment, "color")
             default_label = "Value"
-        return values.astype(float), "scalar", color.label or default_label, color.palette, color.limits
+        return values.astype(float), "scalar", color.label or default_label, color.palette, color.limits, None
     if color in scalar_fields:
         values, label = scalar_fields[color]
         alignment = "frame" if color == "n_patterns" else "pattern"
-        return _aligned_values(values, dataset, rows, alignment, "color").astype(float), "scalar", label, "Viridis", None
+        values = _aligned_values(values, dataset, rows, frames, alignment, "color").astype(float)
+        return values, "scalar", label, "Viridis", None, None
     rotations = dataset.pattern_rotations[rows]
     if color == "cubic_ipf":
         if dataset.crystal is None:
@@ -401,46 +539,44 @@ def _map_colors(
         if dataset.crystal.crystal_system != "cubic":
             raise ValueError("cubic IPF coloring requires a cubic crystal")
         directions = _crystal_directions(rotations, surface.normal)
-        return cubic_ipf_colors(directions), "rgb", "Cubic IPF", None, None
+        return _with_frame_records(cubic_ipf_colors(directions), frames), "rgb", "Cubic IPF", None, None, None
     if color == "rodrigues":
-        operations = (
-            symmetry_operations(dataset.crystal.space_group)
-            if dataset.crystal and dataset.crystal.crystal_system in ("cubic", "hexagonal")
-            else None
-        )
-        vectors = _finite_rows(
-            rotations,
-            lambda finite: orientation_to_rodrigues(
-                symmetry_reduce_orientation(finite, operations=operations)
-            ),
-        )
-        return rodrigues_colors(vectors), "rgb", "Rodrigues RGB", None, None
+        operations, symmetry = _symmetry_operations(dataset, orientation_symmetry)
+        if rodrigues_reference is not None and rodrigues_reference_reciprocal is not None:
+            raise ValueError("rodrigues_reference and rodrigues_reference_reciprocal are mutually exclusive")
+        if rodrigues_reference is not None:
+            reference = _reference_rotation(dataset, rodrigues_reference, "rodrigues_reference")
+        elif rodrigues_reference_reciprocal is not None:
+            reference = _custom_reference_rotation(dataset, rodrigues_reference_reciprocal)
+        else:
+            reference = None
+        if reference is None:
+            vectors = _finite_rows(
+                rotations,
+                lambda finite: orientation_to_rodrigues(
+                    symmetry_reduce_orientation(finite, operations=operations)
+                ),
+            )
+        else:
+            vectors = _finite_rows(
+                rotations,
+                lambda finite: orientation_to_rodrigues(
+                    misorientation_matrix(finite, reference, operations=operations)
+                ),
+            )
+        return _with_frame_records(rodrigues_colors(vectors), frames), "rgb", "Rodrigues RGB", None, None, symmetry
     if color == "misorientation":
         if misorientation_reference is None:
             raise ValueError("misorientation_reference is required for misorientation coloring")
-        try:
-            frame_id, pattern_index = misorientation_reference
-            reference_row = next(
-                row
-                for row in range(dataset.n_patterns)
-                if dataset.frame_ids[dataset.pattern_frame_indices[row]] == frame_id
-                and dataset.pattern_indices[row] == pattern_index
-            )
-        except (TypeError, ValueError, StopIteration) as error:
-            raise ValueError("misorientation_reference must identify a pattern") from error
-        reference = dataset.pattern_rotations[reference_row]
-        operations = (
-            symmetry_operations(dataset.crystal.space_group)
-            if dataset.crystal and dataset.crystal.crystal_system in ("cubic", "hexagonal")
-            else None
-        )
+        reference = _reference_rotation(dataset, misorientation_reference, "misorientation_reference")
+        operations, symmetry = _symmetry_operations(dataset, orientation_symmetry)
         vectors = _finite_rows(
             rotations,
             lambda finite: orientation_to_rodrigues(
                 misorientation_matrix(finite, reference, operations=operations)
             ),
         )
-        return rodrigues_colors(vectors), "rgb", "Misorientation", None, None
+        return _with_frame_records(rodrigues_colors(vectors), frames), "rgb", "Misorientation", None, None, symmetry
     if color == "pole_hsv":
         if dataset.crystal is None or dataset.crystal.crystal_system != "cubic":
             raise ValueError("cubic crystal context is required for pole HSV coloring")
@@ -453,7 +589,7 @@ def _map_colors(
         colors = closest_pole_colors(
             points, local_rows, len(rows), center=pole_center, radius=radius
         )
-        return colors, "rgb", "Pole Figure HSV", None, None
+        return _with_frame_records(colors, frames), "rgb", "Pole Figure HSV", None, None, None
     raise ValueError(f"unknown color mode {color!r}; choose from {_COLOR_VALUES}")
 
 
@@ -468,28 +604,96 @@ def prepare_map(
     pole_hkl=(1, 0, 0),
     pole_center=(0.0, 0.0),
     pole_color_radius_deg=22.5,
+    orientation_symmetry: SymmetryChoice = "auto",
+    rodrigues_reference=None,
+    rodrigues_reference_reciprocal=None,
 ):
     """Prepare a two- or three-dimensional spatial map.
 
-    ``scope=None`` uses ``DataScope(patterns="best", min_indexed=3)``. This
-    differs from detector-view preparation, whose ``patterns`` argument
-    defaults to ``"all"``.
+    Parameters
+    ----------
+    source
+        A :class:`ResultSet` or :class:`VisualizationDataset`.
+    axes
+        Two or three built-in axis names or :class:`Axis` objects.
+    color
+        A named scalar, a :class:`ScalarColor`, an aligned array, or one of
+        the orientation colors ``"cubic_ipf"``, ``"rodrigues"``,
+        ``"misorientation"``, and ``"pole_hsv"``.
+    scope
+        Pattern selection. `None` uses ``DataScope(patterns="best",
+        min_indexed=3)``, which differs from detector-view preparation, whose
+        ``patterns`` argument defaults to ``"all"``. A scope with
+        ``unindexed_frames`` (or ``patterns="all_frames"``) appends one
+        frame-only record for every frame left without a selected pattern,
+        after the pattern records. Its ``pattern_indices`` entry is
+        :data:`NO_PATTERN`, its ``indexed`` flag is `False`, pattern-based
+        colors are ``NaN``, and frame-based values (built-in axes,
+        ``"n_patterns"``, frame-aligned custom values) are real. A
+        pattern-aligned :class:`Axis` cannot place such a record and raises.
+    surface
+        Sample surface frame for IPF and pole coloring.
+    misorientation_reference
+        ``(frame_id, pattern_index)`` of the reference pattern for
+        ``"misorientation"`` coloring. The pattern must exist and have a
+        finite orientation.
+    pole_hkl, pole_center, pole_color_radius_deg
+        Pole HSV coloring settings.
+    orientation_symmetry
+        Symmetry reduction for ``"rodrigues"`` and ``"misorientation"``
+        colors. ``"auto"`` uses the crystal's proper rotations when its system
+        is cubic or hexagonal and otherwise applies no reduction; the
+        reduction actually applied is reported in ``MapData.symmetry`` and is
+        never silently cubic. ``"cubic"`` and ``"hexagonal"`` force those
+        operations; ``"none"`` applies no reduction.
+    rodrigues_reference
+        ``(frame_id, pattern_index)`` of an existing pattern whose orientation
+        is the reference for ``"rodrigues"`` colors, so that pattern maps to
+        the zero vector. Without a reference the laboratory frame is the
+        reference.
+    rodrigues_reference_reciprocal
+        A ``(3, 3)`` reciprocal lattice, rows ``a*``, ``b*``, ``c*`` in 1/nm
+        including the factor of two pi, whose orientation relative to the
+        crystal's native reference basis is the reference for
+        ``"rodrigues"`` colors. It must be finite and nonsingular and describe a proper rotation of
+        the crystal lattice. This requires crystal context and cannot be
+        combined with ``rodrigues_reference``.
+
+    Returns
+    -------
+    MapData
+        Pattern records in scope order followed by any frame-only records.
+
+    Raises
+    ------
+    ValueError
+        For unknown axes or colors, non-finite coordinates, missing crystal
+        context, an invalid or unknown reference, an unknown symmetry choice,
+        or mutually exclusive references.
     """
     dataset = _dataset(source)
     if len(axes) not in (2, 3):
         raise ValueError("axes must contain two or three entries")
-    rows = _pattern_rows(dataset, scope)
+    scope = scope or DataScope()
+    rows = np.flatnonzero(scope.pattern_mask(dataset))
+    frames = (
+        np.flatnonzero(scope.unindexed_frame_mask(dataset))
+        if scope.includes_unindexed_frames
+        else np.empty(0, dtype=int)
+    )
+    record_frames = np.concatenate([dataset.pattern_frame_indices[rows], frames]).astype(int)
     surface = SurfaceFrame.aps_34ide(surface or "normal") if isinstance(surface, (str, type(None))) else surface
     if not isinstance(surface, SurfaceFrame):
         raise TypeError("surface must be a SurfaceFrame, a preset name, or None")
-    resolved = [_resolve_axis(axis, dataset, rows) for axis in axes]
-    coordinates = np.column_stack([item[0] for item in resolved]) if rows.size else np.empty((0, len(axes)))
+    resolved = [_resolve_axis(axis, dataset, rows, frames) for axis in axes]
+    coordinates = (
+        np.column_stack([item[0] for item in resolved]).astype(float)
+        if len(record_frames)
+        else np.empty((0, len(axes)))
+    )
     if len(coordinates) and not np.isfinite(coordinates).all():
         invalid = ~np.isfinite(coordinates).all(axis=1)
-        frame_ids = tuple(dict.fromkeys(
-            dataset.frame_ids[index]
-            for index in dataset.pattern_frame_indices[rows[invalid]]
-        ))
+        frame_ids = tuple(dict.fromkeys(dataset.frame_ids[index] for index in record_frames[invalid]))
         shown = frame_ids[:5]
         suffix = ", ..." if len(frame_ids) > len(shown) else ""
         names = tuple(axis if isinstance(axis, str) else axis.label for axis in axes)
@@ -497,23 +701,33 @@ def prepare_map(
             f"map axes {names} contain missing or non-finite coordinates for frames "
             f"{shown}{suffix}"
         )
-    colors, kind, label, palette, limits = _map_colors(
+    colors, kind, label, palette, limits, symmetry = _map_colors(
         color,
         dataset,
         rows,
+        frames,
         surface,
         misorientation_reference,
         pole_hkl,
         pole_center,
         pole_color_radius_deg,
+        orientation_symmetry,
+        rodrigues_reference,
+        rodrigues_reference_reciprocal,
     )
-    frame_ids = tuple(dataset.frame_ids[index] for index in dataset.pattern_frame_indices[rows])
-    indexed = np.isfinite(dataset.pattern_rotations[rows]).all(axis=(1, 2))
+    frame_ids = tuple(dataset.frame_ids[index] for index in record_frames)
+    pattern_indices = np.concatenate([
+        dataset.pattern_indices[rows], np.full(len(frames), NO_PATTERN, dtype=int)
+    ]).astype(int)
+    indexed = np.concatenate([
+        np.isfinite(dataset.pattern_rotations[rows]).all(axis=(1, 2)),
+        np.zeros(len(frames), dtype=bool),
+    ])
     return MapData(
         coordinates,
         tuple(item[1] for item in resolved),
         frame_ids,
-        dataset.pattern_indices[rows],
+        pattern_indices,
         colors,
         kind,
         label,
@@ -521,8 +735,8 @@ def prepare_map(
         limits,
         indexed,
         all(isinstance(axis, str) for axis in axes),
+        symmetry,
     )
-
 
 def prepare_pole_figure(
     source,
