@@ -516,8 +516,8 @@ def index_frame(
     detector_id
         Detector identifier to select instead of ``detector_index``.
     cosmic_filter
-        Value recorded in XML output for cosmic-ray filtering provenance.
-        This option does not apply an additional Python-side filter.
+        Must be ``False``. Cosmic-ray filtering is unsupported for indexing;
+        ``True`` raises :class:`InputError`.
     start, group
         Full-detector ROI origin and pixel grouping in ``(x, y)`` order.
     depth
@@ -591,8 +591,8 @@ class Indexer:
     detector_id
         Detector identifier to select instead of ``detector_index``.
     cosmic_filter
-        Value recorded in XML output for cosmic-ray filtering provenance.
-        This option does not apply an additional Python-side filter.
+        Must be ``False``. Cosmic-ray filtering is unsupported for indexing;
+        ``True`` raises :class:`InputError`.
 
     Raises
     ------
@@ -629,6 +629,8 @@ class Indexer:
         detector_id: str | None = None,
         cosmic_filter: bool = False,
     ):
+        if cosmic_filter:
+            raise InputError("cosmic_filter=True is unsupported for indexing; use False")
         self.geometry_path = geometry.path if isinstance(geometry, Geometry) else Path(geometry)
         self.geometry = geometry if isinstance(geometry, Geometry) else Geometry(self.geometry_path)
         self.crystal = load_crystal(crystal) if isinstance(crystal, (str, Path)) else crystal
@@ -646,7 +648,7 @@ class Indexer:
             raise InputError(f"detector_index {detector_index!r} is not an active detector slot") from error
         self.detector_index = detector_index
         self.detector_id = self.detector.detector_id
-        self.cosmic_filter = cosmic_filter
+        self.cosmic_filter = False
         self._xtl = self._crystal_to_xtl(self.crystal) if self.crystal else Xtl()
 
     def __repr__(self) -> str:

@@ -502,8 +502,8 @@ def lauego(input_image: str, output_dir: str, geo_file: str, crystal_file: str,
     depth_override
         Optional depth in microns written into the intermediate peaks file.
     cosmic_filter
-        Cosmic-filter provenance value written to XML. This function does not
-        itself apply a cosmic-ray filter.
+        Must be ``False``. Cosmic-ray filtering is unsupported for indexing;
+        ``True`` raises :class:`ValueError` before any output is created.
     generate_xml
         Generate parsed XML output after the subprocess stages.
     xml_output_file
@@ -525,6 +525,8 @@ def lauego(input_image: str, output_dir: str, geo_file: str, crystal_file: str,
     function.
     """
     
+    if cosmic_filter:
+        raise ValueError("cosmic_filter=True is unsupported for indexing; use False")
     if threshold_ratio is not None and threshold_ratio <= 0:
         raise ValueError("threshold_ratio must be positive or None")
     resolved_threshold_ratio = 4.0 if threshold_ratio is None else threshold_ratio

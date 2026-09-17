@@ -396,3 +396,11 @@ def test_is_results_file_rejects_frame_hdf5_and_non_hdf5(tmp_path):
     assert not is_results_file(frame)
     assert not is_results_file(tmp_path / "missing.h5")
     assert not is_results_file(__file__)
+
+
+def test_conversion_preserves_historical_cosmic_filter_true(tmp_path):
+    xml_path = tmp_path / "historical.xml"
+    xml_path.write_text("<AllSteps><step><detector><cosmicFilter>True</cosmicFilter>"
+                        "</detector></step></AllSteps>")
+    with h5py.File(convert_xml(xml_path)) as source:
+        assert bool(source["run"].attrs["cosmic_filter"])

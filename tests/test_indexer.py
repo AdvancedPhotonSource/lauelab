@@ -670,7 +670,7 @@ def test_indexer_replace_preserves_detector_slot_unless_id_is_explicit(tmp_path)
 
     crystal = load_crystal(CRYSTAL)
     assert indexer.replace(crystal=crystal).crystal is crystal
-    assert indexer.replace(cosmic_filter=True).detector_index == indexer.detector_index
+    assert indexer.replace(cosmic_filter=False).detector_index == indexer.detector_index
 
 
 def test_indexer_validates_detector_id_metadata_for_all_input_kinds(tmp_path):
@@ -699,3 +699,15 @@ def test_explicit_detector_id_metadata_overrides_hdf5_metadata(tmp_path):
     result = indexer.index(path, metadata={"detector_id": indexer.detector_id})
 
     assert result.metadata["detector_id"] == indexer.detector_id
+
+
+def test_indexing_rejects_unsupported_cosmic_filter_before_loading_input(tmp_path):
+    from lauelab.indexing import InputError
+
+    missing = tmp_path / "missing.xml"
+    with pytest.raises(InputError, match="cosmic_filter=True is unsupported for indexing"):
+        Indexer(missing, cosmic_filter=True)
+    with pytest.raises(InputError, match="cosmic_filter=True is unsupported for indexing"):
+        index_frame(tmp_path / "missing.h5", geometry=missing, cosmic_filter=True)
+    with pytest.raises(InputError, match="cosmic_filter=True is unsupported for indexing"):
+        Indexer(GEOMETRY).replace(cosmic_filter=True)

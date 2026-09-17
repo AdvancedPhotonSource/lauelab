@@ -128,3 +128,17 @@ some footer line
     index_file = tmp_path / "index_without_nindexed.txt"
     index_file.write_text(content)
     assert _parse_indexing_output(str(index_file)) == 0
+
+
+def test_lauego_rejects_cosmic_filter_before_creating_outputs(tmp_path, monkeypatch):
+    import pytest
+    from lauelab.indexing import lauego
+
+    def unexpected_subprocess(*args, **kwargs):
+        pytest.fail("unsupported filtering must be rejected before executing commands")
+
+    monkeypatch.setattr("subprocess.run", unexpected_subprocess)
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="cosmic_filter=True is unsupported for indexing"):
+        lauego("missing.h5", str(output), "missing.xml", "missing.xtl", cosmic_filter=True)
+    assert not output.exists()

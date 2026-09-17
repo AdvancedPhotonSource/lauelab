@@ -248,7 +248,7 @@ def test_native_and_converted_files_preserve_acquisition_metadata(tmp_path):
 
 @requires_liblaue
 def test_converted_file_preserves_available_native_run_parameters(tmp_path):
-    indexer = Indexer(GEOMETRY, CRYSTAL, cosmic_filter=True)
+    indexer = Indexer(GEOMETRY, CRYSTAL, cosmic_filter=False)
     result = indexer.index(np.zeros((2, 2), dtype=np.uint16), keep_image=False)
     xml_path = tmp_path / "results.xml"
     indexer.write_many_xml([result], xml_path)
@@ -256,7 +256,7 @@ def test_converted_file_preserves_available_native_run_parameters(tmp_path):
         run = source["run"].attrs
         assert run["program"] == "liblaue"
         assert run["peak_program"] == "liblaue"
-        assert bool(run["cosmic_filter"])
+        assert not bool(run["cosmic_filter"])
         for name in ("max_rfactor", "max_peaks", "min_separation", "peak_shape"):
             assert run[name] == getattr(indexer.peak_params, name)
         for name in ("kev_max_calc", "kev_max_test", "angle_tolerance_deg", "cone_deg", "hkl_prefer"):

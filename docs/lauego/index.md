@@ -49,7 +49,7 @@ The in-process path:
 | Index arguments | Fields of `IndexParams` |
 | `index_h`, `index_k`, `index_l` | `IndexParams.hkl_prefer` |
 | `depth_override` | `depth` on `index_frame()` or `Indexer.index()` |
-| `cosmic_filter` | `cosmic_filter` on `index_frame()` or `Indexer` |
+| `cosmic_filter` | Must be `False` in both APIs; indexing cosmic-ray filtering is unsupported |
 | `generate_xml` | An explicit `FrameResult.write_xml()` call |
 | `xml_output_file` | The path passed to `write_xml()` |
 | `timeout` | No replacement in the in-process API |
