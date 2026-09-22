@@ -57,6 +57,8 @@ A converted file carries only the run attributes the XML recorded, when present:
 | `frames/hutch_temperature`, `sample_distance` | `float32` | `(n,)` | unspecified | Acquisition values without an established unit; no conversion applied |
 | `frames/detector_ids` | string | `(n,)` | | Detector identifier |
 | `frames/input_images` | string | `(n,)` | | Source HDF5 path |
+| `frames/source_point_ids` | string | `(n,)` | | Point ID in the scan file at `input_images`, empty for ordinary frames; optional for compatibility with earlier files |
+| `frames/source_depth_indices` | `int32` | `(n,)` | | Zero-based depth index of that frame, `-1` when none; optional, paired with `source_point_ids` |
 | `frames/titles`, `sample_names`, `user_names`, `beamlines`, `dates_exposed`, `ccd_shutters`, `mono_modes` | string | `(n,)` | | Acquisition metadata strings |
 | `frames/image_shapes` | `int32` | `(n, 2)` | | Frame shape as `(rows, columns)` |
 | `frames/roi_starts` | `int32` | `(n, 2)` | | Full-detector `(x, y)` origin of the frame |
@@ -96,7 +98,7 @@ A converted file carries only the run attributes the XML recorded, when present:
 ```{eval-rst}
 .. currentmodule:: lauelab.indexing
 
-.. autoclass:: FrameResult(peaks, patterns, threshold_used, total_sum, sum_above_threshold, num_above_threshold, peaksearch_seconds, indexing_seconds, threshold_ratio=4.0, peak_minwidth=0.0, peak_maxwidth=0.0, peak_max_cent_to_fit=0.0, peak_boxsize=0, metadata={}, input_image=None, image_shape=(0, 0), start=(0, 0), group=(1, 1), depth=None, image=None)
+.. autoclass:: FrameResult(peaks, patterns, threshold_used, total_sum, sum_above_threshold, num_above_threshold, peaksearch_seconds, indexing_seconds, threshold_ratio=4.0, peak_minwidth=0.0, peak_maxwidth=0.0, peak_max_cent_to_fit=0.0, peak_boxsize=0, metadata={}, input_image=None, image_shape=(0, 0), start=(0, 0), group=(1, 1), depth=None, source=None, image=None)
    :members: indexed, n_peaks, n_indexed, n_patterns, elapsed_seconds, indexed_peak_indices, unindexed_peak_indices, write_xml
 ```
 

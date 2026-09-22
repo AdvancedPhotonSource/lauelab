@@ -33,7 +33,7 @@ The in-process API accepts a two-dimensional detector frame, as a NumPy array in
 
 ## Understand indexing
 
-The [indexing pipeline](concepts/indexing-pipeline.md) explains the three processing stages and the data passed between them. The [algorithm pages](concepts/algorithms/index.md) provide more detail without interrupting the first-use path.
+The [indexing pipeline](concepts/indexing-pipeline.md) explains the three processing stages and the data passed between them. The [algorithm pages](concepts/algorithms/index.md) explain the calculations and parameter effects in more detail.
 
 ## Understand reconstruction
 

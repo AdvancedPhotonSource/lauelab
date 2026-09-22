@@ -78,6 +78,8 @@ ffi.cdef(
     int laue_recon_set_wire_positions(laue_recon *, const double *, size_t, int);
     int laue_recon_stripe(laue_recon *, const void *, int, size_t, size_t, size_t,
                           const double *, const double *, const unsigned char *, double *, int, double *);
+    int laue_recon_store_stripe(const double *, size_t, size_t, double, int, void *,
+                                void *, void *, int);
     int laue_recon_n_depths(const laue_recon *);
     double laue_recon_depth_um(const laue_recon *, int);
     const char *laue_recon_last_error(const laue_recon *);

@@ -10,7 +10,7 @@ from typing import Iterable, Literal, Sequence
 
 import numpy as np
 
-from lauelab.indexing import Crystal, FrameResult, Geometry
+from lauelab.indexing import Crystal, FrameResult, Geometry, ScanFrame
 from lauelab.indexing.indexer import PEAK_DTYPE
 
 FrameId = str | int
@@ -73,9 +73,8 @@ class DataScope:
     unindexed_frames
         Also select frames left with no selected pattern, as frame-only
         records: maps place them as gray points and frame-based tables keep
-        their peaks. ``patterns="all_frames"`` implies this. Such a frame has a
-        real frame identity and no pattern identity; nothing is invented for
-        it.
+        their peaks. ``patterns="all_frames"`` implies this. These records retain
+        their frame IDs and have no associated pattern ID.
     """
 
     patterns: PatternSelection = "best"
@@ -246,6 +245,9 @@ class VisualizationDataset:
     assignment_predicted_intensity: np.ndarray
     crystal: Crystal | None = None
     geometry: Geometry | None = field(default=None, repr=False, compare=False)
+    # The ScanFrame each frame was read from, or None; None for the whole
+    # tuple means no frame came from a scan file.
+    sources: tuple[ScanFrame | None, ...] | None = None
 
     def __repr__(self) -> str:
         return (
@@ -276,6 +278,12 @@ class VisualizationDataset:
             raise ValueError("detector_ids, input_images, and images must align with frame_ids")
         object.__setattr__(self, "detector_ids", tuple(self.detector_ids))
         object.__setattr__(self, "input_images", tuple(self.input_images))
+        sources = (None,) * frame_count if self.sources is None else tuple(self.sources)
+        if len(sources) != frame_count or any(
+            source is not None and not isinstance(source, ScanFrame) for source in sources
+        ):
+            raise ValueError("sources must hold one ScanFrame or None per frame")
+        object.__setattr__(self, "sources", sources)
         owned_images = []
         for image in self.images:
             if image is None:
@@ -393,6 +401,7 @@ class VisualizationDataset:
             starts=starts,
             groups=groups,
             input_images=tuple(result.input_image for result in results),
+            sources=tuple(result.source for result in results),
             images=tuple(result.image for result in results),
             peak_frame_indices=np.asarray(peak_frames),
             peak_indices=np.asarray(peak_indices),

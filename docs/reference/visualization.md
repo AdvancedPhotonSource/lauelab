@@ -1,6 +1,6 @@
 # Visualization
 
-The public visualization API contains normalized data, prepared view data, Plotly renderers, selection parsing, and typed tables. Preparation and plot functions accept either `ResultSet` or `VisualizationDataset`.
+The visualization API provides maps, pole figures, detector views, and tables, along with Plotly selection handling. Pass a `ResultSet` or `VisualizationDataset` to preparation and plotting functions.
 
 See [Visualization data](../guides/visualization.md) for workflows, coordinate conventions, and examples.
 
@@ -97,9 +97,28 @@ Each renderer accepts a prepared model or normalized input. `trace_update` chang
 .. autofunction:: indexed_peak_table
 ```
 
+## Depth inspection
+
+These builders render the prepared data of `lauelab.reconstruct.inspection`; see [Inspect a reconstructed point](../guides/depth-inspection.md). Trace roles are `"image"` and `"roi"` for the reference image, `"trace"` and `"selected"` for one depth trace, and `"roi"` for ROI traces.
+
+```{eval-rst}
+.. currentmodule:: lauelab.visualization
+
+.. autoclass:: RoiOverlay
+   :members:
+
+.. autofunction:: plot_reference_image
+
+.. autofunction:: plot_depth_trace
+
+.. autofunction:: plot_roi_traces
+
+.. autodata:: DEFAULT_ROI_COLORS
+```
+
 ## Built-in choices
 
-`AXIS_OPTIONS`, `COLOR_MODES`, `POLE_COLOR_MODES`, `SURFACE_PRESETS`, and `PALETTE_OPTIONS` are immutable tuples of {class}`~lauelab.visualization.Choice` objects. Their values match the corresponding Laue Portal controls.
+`AXIS_OPTIONS`, `COLOR_MODES`, `POLE_COLOR_MODES`, `SURFACE_PRESETS`, `PALETTE_OPTIONS`, `DEPTH_AXIS_OPTIONS`, `INTENSITY_OPTIONS`, and `REFERENCE_OPTIONS` are immutable tuples of {class}`~lauelab.visualization.Choice` objects. Their values match the corresponding Laue Portal controls.
 
 ```{eval-rst}
 .. currentmodule:: lauelab.visualization
@@ -115,6 +134,12 @@ Each renderer accepts a prepared model or normalized input. `trace_update` chang
 .. autodata:: SURFACE_PRESETS
 
 .. autodata:: PALETTE_OPTIONS
+
+.. autodata:: DEPTH_AXIS_OPTIONS
+
+.. autodata:: INTENSITY_OPTIONS
+
+.. autodata:: REFERENCE_OPTIONS
 ```
 
 ## Surface frames

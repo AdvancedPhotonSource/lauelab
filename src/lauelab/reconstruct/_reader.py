@@ -72,7 +72,10 @@ def _scalar(source: h5py.File, name: str, default=None):
     if name not in source:
         return default
     values = np.asarray(source[name]).ravel()
-    return values[0].item() if len(values) else default
+    if not len(values):
+        return default
+    value = values[0]
+    return value.item() if isinstance(value, np.generic) else value
 
 
 def _text(value) -> str | None:
@@ -103,10 +106,19 @@ def positioner_from_file_time(value: str | None) -> str:
 
 def read_scan_info(source: h5py.File, normalization: str | None = None) -> ScanInfo:
     """Read metadata and aligned wire positions from an open scan file."""
+    try:
+        return _read_scan_info(source, normalization)
+    except (ValueError, TypeError, OverflowError, KeyError) as error:
+        raise InputError(f"invalid metadata in {source.filename}: {error}") from error
+
+
+def _read_scan_info(source, normalization) -> ScanInfo:
     name = "entry1/data/data"
     if name not in source:
         raise InputError(f"input file has no {name!r} dataset")
     data = source[name]
+    if not isinstance(data, h5py.Dataset):
+        raise InputError(f"{name!r} must be a dataset")
     if data.ndim != 3 or data.shape[0] < 5:
         raise InputError(
             "entry1/data/data needs at least 5 stored slices "
@@ -155,6 +167,7 @@ def read_scan_info(source: h5py.File, normalization: str | None = None) -> ScanI
     sample = tuple(float(_scalar(source, f"entry1/sample/sample{name}", np.nan)) for name in "XYZ")
     scan_number = _scalar(source, "entry1/scanNum")
     file_time = _text(source.attrs.get("file_time"))
+    energy = _scalar(source, "entry1/sample/incident_energy")
     return ScanInfo(
         image_geometry=ImageGeometry(nx, ny, start, group, rows, cols),
         shape=(n_images, rows, cols),
@@ -166,7 +179,7 @@ def read_scan_info(source: h5py.File, normalization: str | None = None) -> ScanI
         scale=scale,
         scan_number=None if scan_number is None else int(scan_number),
         sample_position=sample,
-        energy_kev=_scalar(source, "entry1/sample/incident_energy"),
+        energy_kev=None if energy is None else float(energy),
     )
 
 

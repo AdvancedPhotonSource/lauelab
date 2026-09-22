@@ -64,6 +64,8 @@ dataset /frames/sample_names dtype=string shape=(4,) maxshape=('unlimited',) chu
 dataset /frames/sample_positions dtype=<f8 shape=(4, 3) maxshape=('unlimited', 3) chunks=(1024, 3)
   @units
 dataset /frames/scan_numbers dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/source_depth_indices dtype=<i4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
+dataset /frames/source_point_ids dtype=string shape=(4,) maxshape=('unlimited',) chunks=(1024,)
 dataset /frames/sum_above_threshold dtype=<f8 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
 dataset /frames/threshold_ratio dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)
 dataset /frames/threshold_used dtype=<f4 shape=(4,) maxshape=('unlimited',) chunks=(1024,)

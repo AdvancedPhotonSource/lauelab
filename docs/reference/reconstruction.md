@@ -4,7 +4,9 @@
 
 See [Reconstruct a wire scan](../guides/reconstruction.md) for usage and [Depth reconstruction](../concepts/algorithms/depth-reconstruction.md) for the calculation.
 
-All paths return a {class}`~lauelab.reconstruct.ReconstructionResult`. Runtime failures are recorded in that result. Invalid arguments and setup failures that occur before processing raise exceptions. The native path does not support the executable's `-F` parameter-file option or distortion maps.
+{func}`~lauelab.reconstruct.reconstruct_scan` reconstructs many points into one HDF5 file, whose layout and value semantics are defined in [Reconstruction scan format](../development/reconstruction-scan-format.md). It returns a {class}`~lauelab.reconstruct.ScanResult`. A {class}`~lauelab.indexing.ScanFrame`, also importable from this module, identifies a stored frame for indexing, and {func}`~lauelab.reconstruct.export_per_depth` writes a point back out as per-depth files.
+
+Every other path returns a {class}`~lauelab.reconstruct.ReconstructionResult`. Runtime failures are recorded in that result. Invalid arguments and setup failures that occur before processing raise exceptions. The native path does not support the executable's `-F` parameter-file option or distortion maps.
 
 The subprocess environment defaults `OPENBLAS_NUM_THREADS` to `1`. The reconstruction programs link OpenBLAS through GSL but do not call BLAS, so extra OpenBLAS workers only consume CPU time. An existing caller setting is preserved. The `num_threads` argument independently controls the CPU program's OpenMP reconstruction threads. The executable's `image_range` (`-f`/`-l`) options apply only to scans stored as one file per image; multi-image HDF5 input used by `Reconstructor` has no file range.
 
@@ -33,6 +35,33 @@ A wire axis exactly parallel to the positioner x axis, with a zero wire rotation
 
 .. autofunction:: reconstruct_points
 
+.. autofunction:: reconstruct_scan
+
+.. autoclass:: ScanResult
+   :members:
+
+.. autoclass:: PointOutcome
+   :members:
+
+.. autoclass:: ScanReader
+   :members:
+
+.. autoclass:: PointReader
+   :members:
+
+.. autoclass:: PerDepthReader
+   :members:
+
+.. autoclass:: PointEntry
+   :members:
+
+.. autofunction:: validate_scan_file
+
+.. autofunction:: export_per_depth
+
+.. autoclass:: ScanFileSummary
+   :members:
+
 .. autofunction:: reconstruct
 
 .. autofunction:: reconstruct_gpu
@@ -44,5 +73,38 @@ A wire axis exactly parallel to the positioner x axis, with a zero wire rotation
 .. autofunction:: gpu_available
 
 Wire metadata used by reconstruction is documented as
-{class}`lauelab.indexing.WireGeometry`.
+:class:`lauelab.indexing.WireGeometry`.
+```
+
+## Inspection
+
+`lauelab.reconstruct.inspection` provides square ROI placement, depth traces, normalization, positive-sample selection for logarithmic axes, and reference images. See [Inspect a reconstructed point](../guides/depth-inspection.md) for examples. These functions operate independently of the plotting library. Every returned array is a new, read-only array that the caller owns. ROI bounds are half-open `(y0, y1, x0, x1)` in stored-image pixels.
+
+```{eval-rst}
+.. currentmodule:: lauelab.reconstruct.inspection
+
+.. autofunction:: square_bounds
+
+.. autofunction:: bounds_center
+
+.. autofunction:: depth_trace
+
+.. autofunction:: roi_traces
+
+.. autofunction:: reference_image
+
+.. autoclass:: DepthTrace
+   :members:
+
+.. autoclass:: NormalizedTrace
+   :members:
+
+.. autoclass:: LogSamples
+   :members:
+
+.. autoclass:: ReferenceImage
+   :members:
+
+.. autoclass:: ArrayPoint
+   :members:
 ```

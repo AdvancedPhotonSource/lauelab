@@ -230,6 +230,8 @@ class ResultsWriter:
             "energies_kev": metadata.get("energy_kev", np.nan),
             "detector_ids": metadata.get("detector_id") or "",
             "input_images": result.input_image or "",
+            "source_point_ids": "" if result.source is None else result.source.point_id,
+            "source_depth_indices": -1 if result.source is None else result.source.depth_index,
             "image_shapes": result.image_shape,
             "roi_starts": result.start,
             "roi_groups": result.group,
@@ -432,9 +434,15 @@ def validate_results_file(
         if len(set(ids)) != count:
             fail("frame identities repeat")
 
+        source_fields = ("/frames/source_point_ids", "/frames/source_depth_indices")
+        if (source_fields[0] in source) != (source_fields[1] in source):
+            fail("source_point_ids and source_depth_indices must both be present or both absent")
+
         lengths = {}
         for name, spec in DATASETS.items():
             if not spec.resizable or name == "/frames/frame_ids":
+                continue
+            if spec.optional and name not in source:
                 continue
             data = dataset(name, spec)
             lengths[name] = len(data)
@@ -451,6 +459,17 @@ def validate_results_file(
                             "assignments": n_assignments}[group]
             if length != expected:
                 fail(f"dataset {name!r} has {length} rows, expected {expected}")
+
+        if source_fields[0] in source:
+            for first in range(0, count, 4096):
+                selection = slice(first, first + 4096)
+                point_ids = source[source_fields[0]].asstr()[selection]
+                depths = source[source_fields[1]][selection]
+                paths = source["/frames/input_images"].asstr()[selection]
+                for point_id, depth, path in zip(point_ids, depths, paths):
+                    if (point_id and (depth < 0 or not path)) or (not point_id and depth != -1):
+                        fail("scan source needs a non-empty path and point ID with a nonnegative "
+                             "depth index; an absent source uses an empty point ID and index -1")
 
         def offsets(name, total):
             values = source[name][...]

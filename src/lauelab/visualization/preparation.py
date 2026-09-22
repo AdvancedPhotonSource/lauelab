@@ -28,7 +28,7 @@ from lauelab.analysis import (
     symmetry_operations,
     symmetry_reduce_orientation,
 )
-from lauelab.indexing._frame import detector_to_roi_pixels, read_h5_frame
+from lauelab.indexing._frame import ScanFrame, detector_to_roi_pixels, read_h5_frame, read_scan_frame
 
 from .data import DataScope, FrameId, ResultSet, VisualizationDataset, _readonly
 from .options import AXIS_OPTIONS, COLOR_MODES, POLE_COLOR_MODES
@@ -643,8 +643,7 @@ def prepare_map(
         Symmetry reduction for ``"rodrigues"`` and ``"misorientation"``
         colors. ``"auto"`` uses the crystal's proper rotations when its system
         is cubic or hexagonal and otherwise applies no reduction; the
-        reduction actually applied is reported in ``MapData.symmetry`` and is
-        never silently cubic. ``"cubic"`` and ``"hexagonal"`` force those
+        applied setting is reported in ``MapData.symmetry``. ``"cubic"`` and ``"hexagonal"`` force those
         operations; ``"none"`` applies no reduction.
     rodrigues_reference
         ``(frame_id, pattern_index)`` of an existing pattern whose orientation
@@ -809,6 +808,8 @@ def _frame_index(dataset, frame_id):
 def _load_image(image):
     if isinstance(image, np.ndarray):
         return image
+    if isinstance(image, ScanFrame):
+        return read_scan_frame(image)[0]
     path = Path(image)
     if path.suffix.lower() == ".npy":
         return np.load(path)
@@ -915,7 +916,7 @@ def prepare_detector_view(
 
     if image is True:
         retained = dataset.images[frame_index]
-        source_path = dataset.input_images[frame_index]
+        source_path = dataset.sources[frame_index] or dataset.input_images[frame_index]
         if retained is not None:
             image_data = retained
         elif source_path:

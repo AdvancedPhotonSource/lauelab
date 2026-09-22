@@ -54,7 +54,7 @@ Do not assume that immediate retry will succeed. Release unneeded arrays and res
 
 Preserve the complete message. It can distinguish a geometry conversion problem from an orientation-indexing problem without exposing native status values as a public API.
 
-No peaks or no patterns is not a failure and does not raise an exception. Apply a separate scientific acceptance policy to those results.
+A successful call can return zero peaks or zero patterns. Check these counts against the scientific acceptance criteria for your experiment.
 
 ## Parallel indexing
 
@@ -64,7 +64,7 @@ An exception in {data}`~lauelab.indexing.EXPECTED_INPUT_ERRORS` (`InputError`, `
 
 ## Output files
 
-A {class}`~lauelab.indexing.ResultsWriter` whose write raised stays failed; further appends raise `RuntimeError`, and the file is not a valid results file. {func}`~lauelab.indexing.validate_results_file` raises `InvalidResultsFile` for such a file and for any other structural defect; a file that cannot be opened raises `OSError`. An {class}`~lauelab.indexing.XmlResultsWriter` failure concerns the auxiliary XML document only. See [Results files](results-file.md).
+After a write failure, {class}`~lauelab.indexing.ResultsWriter` rejects further appends with `RuntimeError`. Recreate the incomplete results file before using it. {func}`~lauelab.indexing.validate_results_file` raises `InvalidResultsFile` for such a file and for any other structural defect; a file that cannot be opened raises `OSError`. An {class}`~lauelab.indexing.XmlResultsWriter` failure concerns the auxiliary XML document only. See [Results files](results-file.md).
 
 ## Reconstruction failure
 
@@ -114,6 +114,6 @@ Do not log full frame arrays. Remove user names, sample names, local paths, and 
 - `ValueError` reports invalid scientific inputs, including array shapes, non-finite values, atomless crystals, and invalid energy intervals.
 - `RuntimeError` reports private simulator loading, resource, execution, numerical, projection, or candidate-limit failures.
 
-A valid simulation with no on-detector reflections returns an empty {class}`~lauelab.analysis.SimulationResult`. It does not raise. The simulator has no fallback, so a `RuntimeError` never means that a simpler calculation replaced the requested one.
+A successful simulation with no on-detector reflections returns an empty {class}`~lauelab.analysis.SimulationResult`. A failed simulation raises `RuntimeError` without attempting a fallback calculation.
 
 Detector-view preparation and rendering propagate these exceptions. Missing crystal context raises only when `simulation_energy_range_kev` is not `None`.

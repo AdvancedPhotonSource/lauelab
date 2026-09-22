@@ -26,6 +26,7 @@ class DatasetSpec:
     units: str | None = None
     resizable: bool = True
     chunk_rows: int | None = 1024
+    optional: bool = False
     attrs: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -40,13 +41,14 @@ I4 = np.dtype("<i4")
 I8 = np.dtype("<i8")
 
 
-def _spec(dtype, shape=(), units=None, *, resizable=True, chunk_rows=1024, **attrs):
+def _spec(dtype, shape=(), units=None, *, resizable=True, chunk_rows=1024, optional=False, **attrs):
     return DatasetSpec(
         dtype=dtype,
         shape=shape,
         units=units,
         resizable=resizable,
         chunk_rows=chunk_rows,
+        optional=optional,
         attrs=attrs,
     )
 
@@ -69,6 +71,10 @@ DATASETS = MappingProxyType({
     "/frames/energies_kev": _spec(F4, units="keV"),
     "/frames/detector_ids": _spec(UTF8),
     "/frames/input_images": _spec(UTF8),
+    # Added within version 1 for frames read from a reconstruction-scan file;
+    # a reader treats their absence as "no scan source" on every frame.
+    "/frames/source_point_ids": _spec(UTF8, optional=True),
+    "/frames/source_depth_indices": _spec(I4, optional=True),
     "/frames/titles": _spec(UTF8),
     "/frames/sample_names": _spec(UTF8),
     "/frames/user_names": _spec(UTF8),

@@ -208,6 +208,19 @@ LAUE_API int laue_recon_stripe(laue_recon *recon, const void *images, int pixel_
                                const double *scale, const double *norm_plane,
                                const unsigned char *mask, double *out,
                                int n_threads, double *seconds_elapsed);
+/* Convert one reconstructed stripe to its stored form and reduce it. values is
+   the n_depths x n_pixels double output of laue_recon_stripe. Each value is
+   multiplied by rescale and stored as an HDF5 dataset of stored_type would
+   store it: a floating type receives the rounded value; an integer type
+   receives the value truncated toward zero and saturated at the type's limits,
+   and NaN as zero. stored receives n_depths x n_pixels elements of stored_type.
+   depth_sums receives n_depths totals over pixels and pixel_sums n_pixels totals
+   over depths of the stored values, as int64_t for an integer stored_type and
+   double otherwise; either may be NULL. Both totals are independent of
+   n_threads, which must be at least 1. */
+LAUE_API int laue_recon_store_stripe(const double *values, size_t n_depths, size_t n_pixels,
+                                     double rescale, int stored_type, void *stored,
+                                     void *depth_sums, void *pixel_sums, int n_threads);
 /* Return the number of output depths for recon, or 0 for NULL. */
 LAUE_API int laue_recon_n_depths(const laue_recon *recon);
 /* Return output depth index in micrometres, or NaN for invalid input. */

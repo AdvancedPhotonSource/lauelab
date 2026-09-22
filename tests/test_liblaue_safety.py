@@ -139,6 +139,7 @@ indexer.index(np.full((350, 350), 500, np.uint16))
     [
         ("peaksearch_memory.c", ()),
         ("recon_memory.c", (ROOT / "tests/data/geo/geoN_2022-03-29_14-15-05.xml",)),
+        ("recon_store.c", ()),
     ],
 )
 def test_native_calls_release_allocations(tmp_path, source_name, arguments):
@@ -194,3 +195,22 @@ def test_native_calls_release_allocations(tmp_path, source_name, arguments):
     )
 
     assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_store_projection_with_unoptimized_openmp(tmp_path):
+    """An optimized build can mask a shared loop-counter race."""
+    compiler = shutil.which("cc")
+    assert compiler is not None, "a C compiler is required for the native regression test"
+    executable = tmp_path / "recon-store-debug"
+    compiled = subprocess.run(
+        [compiler, "-std=c99", "-O0", "-g", "-fopenmp", "-ffunction-sections", "-fdata-sections",
+         f"-I{ROOT / 'src/lauelab/indexing/src/liblaue'}",
+         f"-I{ROOT / 'src/lauelab/indexing/src/pixels2qs/src'}",
+         str(ROOT / "tests/native/recon_store.c"),
+         str(ROOT / "src/lauelab/indexing/src/liblaue/liblaue_recon.c"),
+         "-Wl,--gc-sections", "-lm", "-o", str(executable)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert compiled.returncode == 0, compiled.stderr
+    checked = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
+    assert checked.returncode == 0, checked.stderr

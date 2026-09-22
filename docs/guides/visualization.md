@@ -1,6 +1,6 @@
 # Visualization data
 
-The visualization API normalizes indexing output before it prepares a specific view. This separation lets the same data support Plotly figures, package tables, and custom plotting code.
+Use the visualization API to create maps, pole figures, detector views, and tables from indexing results. Results from Python, HDF5, and LaueGo XML are converted to a common array representation before plotting.
 
 ```text
 FrameResult sequence -> ResultSet -> VisualizationDataset
@@ -14,7 +14,7 @@ VisualizationDataset -> *_table()   -> Table
 
 Preparation returns immutable NumPy arrays. Plot functions accept either normalized input or prepared data and return ordinary `plotly.graph_objects.Figure` objects.
 
-## Prepare modern results
+## Prepare in-memory results
 
 Use {class}`~lauelab.visualization.ResultSet` to attach stable frame IDs and the shared crystal and geometry to a sequence of {class}`~lauelab.indexing.FrameResult` objects.
 
@@ -104,11 +104,11 @@ detected_threshold = DataScope(min_indexed=3, min_detected=5)
 with_unindexed = DataScope(patterns=(0,), min_detected=4, unindexed_frames=True)
 ```
 
-`unindexed_frames=True` keeps the frames that the pattern selection leaves empty, whether they were never indexed or every pattern was filtered out, provided they pass `min_detected`. Maps show them as gray frame-only records and frame-based tables keep their peaks. `patterns="all_frames"` implies it. A frame-only record has a real frame identity and no pattern identity; the library never invents a pattern for it.
+`unindexed_frames=True` keeps the frames that the pattern selection leaves empty, whether they were never indexed or every pattern was filtered out, provided they pass `min_detected`. Maps show them as gray frame-only records and frame-based tables keep their peaks. `patterns="all_frames"` implies it. These records retain their frame IDs and have no associated pattern ID.
 
 `patterns="all_frames"` lets `peak_table` include detected peaks from frames with no indexed patterns. Pattern filtering applies only to frames where patterns exist. An empty selection is valid. Prepared arrays keep their documented dimensionality, and tables keep their columns.
 
-Stable IDs do not depend on row order. A pattern uses `(frame_id, pattern_index)`, and a peak uses `(frame_id, peak_index)`.
+Use `(frame_id, pattern_index)` to identify a pattern and `(frame_id, peak_index)` to identify a peak across selections and views.
 
 ## Prepare a map
 
@@ -167,9 +167,9 @@ map_data = prepare_map(dataset, color="rodrigues", orientation_symmetry="auto")
 print(map_data.symmetry)
 ```
 
-`"auto"` uses the crystal's operations when its system is cubic or hexagonal and applies no reduction otherwise; `map_data.symmetry` reports which one was applied (`"cubic"`, `"hexagonal"`, or `"none"`), so a tetragonal or unknown crystal is never silently treated as cubic. `"cubic"` and `"hexagonal"` force those operations, and `"none"` applies none. The same choice applies to `"misorientation"` coloring.
+`"auto"` applies the crystal's proper rotations for cubic and hexagonal systems. Other systems use no symmetry reduction. `map_data.symmetry` reports the applied setting: `"cubic"`, `"hexagonal"`, or `"none"`. Select one of those settings explicitly to override automatic selection. The same choice applies to `"misorientation"` coloring.
 
-By default the reference orientation is the laboratory frame, so a vector describes the rotation from the crystal's native reference basis. Two alternatives share the misorientation machinery:
+By default the reference orientation is the laboratory frame, so a vector describes the rotation from the crystal's native reference basis. You can also measure orientations relative to an indexed pattern or a supplied reciprocal lattice:
 
 ```python
 relative_to_pattern = prepare_map(
@@ -180,7 +180,7 @@ relative_to_lattice = prepare_map(
 )
 ```
 
-`rodrigues_reference` names an existing pattern by its stable identity; that pattern maps to the zero vector. `rodrigues_reference_reciprocal` is a `(3, 3)` reciprocal lattice with rows `a*`, `b*`, `c*` in 1/nm including the factor of two pi, the same convention as `VisualizationDataset.pattern_reciprocals`; its orientation relative to the crystal's native reference basis becomes the reference, so a pattern whose reciprocal lattice equals `g_ref` maps to the zero vector. The matrix must be finite and nonsingular, must describe the crystal's own lattice (a matrix in 1/angstrom or for a different cell is refused rather than colored as a misorientation), and needs crystal context. Passing both references, a pattern that does not exist, or a reference pattern without a finite orientation raises `ValueError`.
+`rodrigues_reference` selects an existing pattern by `(frame_id, pattern_index)`. That pattern maps to the zero Rodrigues vector. `rodrigues_reference_reciprocal` is a `(3, 3)` reciprocal lattice with rows `a*`, `b*`, `c*` in 1/nm including the factor of two pi, the same convention as `VisualizationDataset.pattern_reciprocals`; its orientation relative to the crystal's native reference basis becomes the reference, so a pattern whose reciprocal lattice equals `g_ref` maps to the zero vector. This option requires crystal context and a finite, nonsingular matrix describing the same crystal lattice. A matrix in 1/angstrom or for a different cell raises `ValueError`. Passing both references, a pattern that does not exist, or a reference pattern without a finite orientation raises `ValueError`.
 
 ### Frames without an indexed pattern
 
@@ -195,9 +195,9 @@ map_data = prepare_map(
 frame_only = ~map_data.has_pattern
 ```
 
-A frame-only record has `pattern_indices` equal to {data}`~lauelab.visualization.NO_PATTERN`, `indexed` `False`, real coordinates from frame-based axes, and `NaN` for any pattern-based color. Frame-based values stay real: `"n_patterns"` is `0` there, and a frame-aligned `ScalarColor` or `Axis` supplies its own value. A pattern-aligned `Axis` cannot place such a record and raises. `indexed` is also `False` for a pattern whose orientation could not be derived; `has_pattern` separates the two cases.
+A frame-only record has `pattern_indices` equal to {data}`~lauelab.visualization.NO_PATTERN`, `indexed` `False`, real coordinates from frame-based axes, and `NaN` for any pattern-based color. Frame-based values remain available: `"n_patterns"` is `0` there, and a frame-aligned `ScalarColor` or `Axis` supplies its own value. A pattern-aligned `Axis` cannot place such a record and raises. `indexed` is also `False` for a pattern whose orientation could not be derived; `has_pattern` separates the two cases.
 
-`plot_map()` draws frame-only records and orientation-less patterns in the gray `unindexed` trace. For scalar colors the same trace holds every record whose value is `NaN`, so gray points never enter the color range. The record's `customdata` pattern identity is `None`, and {func}`~lauelab.visualization.selection_from_plotly` reports it as a selected frame with no pattern.
+`plot_map()` draws frame-only records and orientation-less patterns in the gray `unindexed` trace. For scalar colors the same trace holds every record whose value is `NaN`, and excludes those points from the color range. The record's `customdata` pattern identity is `None`, and {func}`~lauelab.visualization.selection_from_plotly` reports it as a selected frame with no pattern.
 
 ## Create Plotly figures
 
@@ -282,7 +282,7 @@ The helper removes duplicate identities in event order. Simulated points add sta
 
 ## Plot prepared data with Matplotlib
 
-The package does not provide a Matplotlib renderer. The prepared arrays are sufficient for a custom plot:
+Use the prepared arrays to build a Matplotlib plot:
 
 ```python
 import matplotlib.pyplot as plt
@@ -323,7 +323,7 @@ pole_data = prepare_pole_figure(
 
 `pole_data.points` has shape `(n, 2)`. One pattern can produce several rows, so its stable identity can occur more than once. `pole_center` and `pole_color_radius_deg` use the same names as pole HSV coloring in `prepare_map()`. Inspect {data}`~lauelab.visualization.POLE_COLOR_MODES` for the available colors: `"hsv_position"`, `"ipf"`, and `"uniform"`.
 
-HKL-family generation and IPF colors currently support cubic crystals only. The function rejects other crystal systems instead of applying cubic symmetry to them.
+HKL-family generation and IPF colors require a cubic crystal; other crystal systems raise `ValueError`.
 
 ## Prepare a detector view
 
@@ -340,7 +340,7 @@ detector_data = prepare_detector_view(
 )
 ```
 
-`image=True` uses a retained modern image. For XML data, it reads the recorded input path. Image loading is opt-in. You can also pass a two-dimensional NumPy array, a `.npy` path, or a supported HDF5 path.
+`image=True` uses the image retained in the indexing result. For XML data, it reads the recorded input path. Image loading is opt-in. You can also pass a two-dimensional NumPy array, a `.npy` path, or a supported HDF5 path.
 
 Measured and predicted positions use frame pixel `(x, y)` coordinates. `measured_xy` contains every detected peak. Each item in `patterns` contains `predicted_xy`, `hkl`, and the corresponding frame-local peak indices. Back-projection applies the frame's region origin and grouping so predicted positions align with the supplied frame.
 
@@ -365,7 +365,7 @@ dataframe = table.to_dataframe()
 selected = dataframe.query("energy_kev > 12 and goodness > 100")
 ```
 
-The package does not add a second query language. Use pandas to filter, sort, group, or join table data. A DataFrame does not share writable storage with its source table.
+Use pandas to filter, sort, group, or join table data. The DataFrame contains independent copies, so edits leave the source table unchanged.
 
 ## Coordinate and matrix conventions
 
@@ -389,7 +389,7 @@ The physical names, positive directions, and handedness of the laboratory axes s
 
 ## APS 34-ID-E surface presets
 
-Map IPF colors and pole figures accept `"normal"`, `"X"`, `"H"`, `"Y"`, `"Z"`, and `"F"`. These names are APS 34-ID-E acquisition conventions, not general crystallographic names.
+Map IPF colors and pole figures accept `"normal"`, `"X"`, `"H"`, `"Y"`, `"Z"`, and `"F"`. These presets follow APS 34-ID-E acquisition conventions.
 
 Use {class}`~lauelab.analysis.SurfaceFrame` when a named preset does not match the sample:
 

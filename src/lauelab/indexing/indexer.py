@@ -16,7 +16,7 @@ import numpy as np
 from ._liblaue import Geometry, NativeCrystal, ffi, get_library
 from .crystal import Crystal, load_crystal
 from .errors import IndexingError, InputError, NumericalIndexingError
-from ._frame import read_h5_frame, roi_inclusive_end
+from ._frame import ScanFrame, read_h5_frame, read_scan_frame, roi_inclusive_end
 from .lau_dataclasses.atom import Atom as StepAtom
 from .lau_dataclasses.hkls import HKLs
 from .lau_dataclasses.indexing import Indexing
@@ -335,7 +335,12 @@ class FrameResult:
     metadata
         Experiment metadata copied into the result.
     input_image
-        Source HDF5 path, or `None` for an in-memory frame.
+        Source HDF5 path, or `None` for an in-memory frame. For a
+        :class:`ScanFrame` this is the scan file's path; ``source`` holds the
+        point and depth.
+    source
+        The :class:`ScanFrame` that selected the frame, or `None` for an
+        array or a per-frame HDF5 file.
     image_shape
         Frame shape as ``(rows, columns)``.
     start
@@ -378,6 +383,7 @@ class FrameResult:
     start: tuple[int, int] = (0, 0)
     group: tuple[int, int] = (1, 1)
     depth: float | None = None
+    source: ScanFrame | None = None
     image: np.ndarray | None = field(default=None, repr=False, compare=False)
     _step: Step | None = field(default=None, repr=False, compare=False)
 
@@ -607,12 +613,12 @@ class Indexer:
     -----
     Reuse one instance for frames that share geometry, crystal, detector, and
     processing parameters. Concurrent calls to :meth:`index` from several
-    Python threads are not a supported contract. For parallel work, give each
+    Python threads are unsupported. For parallel work, give each
     worker process its own indexer; see :doc:`/guides/batch-indexing`.
 
     Construction normalizes whole-number floats in the parameter objects to
-    ``int``, so ``indexer.peak_params`` can differ in type, never in value,
-    from the object passed in.
+    ``int`` while preserving their values. The parameter types in
+    ``indexer.peak_params`` can therefore differ from those supplied.
 
     Use :meth:`replace` to create a separately validated instance with changed
     configuration.
@@ -694,7 +700,7 @@ class Indexer:
 
     def index(
         self,
-        frame: np.ndarray | str | Path,
+        frame: np.ndarray | str | Path | ScanFrame,
         *,
         start: tuple[int, int] = (0, 0),
         group: tuple[int, int] = (1, 1),
@@ -703,15 +709,17 @@ class Indexer:
         metadata: FrameMetadata | Mapping[str, object] | None = None,
         keep_image: bool = True,
     ) -> FrameResult:
-        """Process one NumPy frame or HDF5 file without subprocesses.
+        """Process one NumPy frame, HDF5 file, or scan frame without subprocesses.
 
         Parameters
         ----------
         frame
             Two-dimensional NumPy array with a dtype in
-            :data:`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES`, or path to a supported HDF5 frame
-            whose image has one of those dtypes. Pixel values enter peak search
-            as their exact double value; no other dtype is converted.
+            :data:`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES`, path to a
+            supported HDF5 frame whose image has one of those dtypes, or a
+            :class:`ScanFrame` naming one stored frame of a reconstruction-scan
+            file. Pixel values enter peak search as their exact double value;
+            no other dtype is converted.
         start
             Zero-based detector ``(x, y)`` origin for an in-memory frame.
         group
@@ -719,8 +727,9 @@ class Indexer:
         depth
             Physical sample depth in micrometres passed to pixel-to-q
             conversion. `None` uses the HDF5 frame's ``entry1/depth`` when
-            that dataset is present and finite, and no depth otherwise. An
-            explicit finite value, including ``0.0``, overrides the file.
+            that dataset is present and finite, the stored depth of a
+            :class:`ScanFrame`, and no depth otherwise. An explicit finite
+            value, including ``0.0``, overrides the file.
         mask
             Array with the same shape as ``frame``. Values are converted to a
             boolean ``uint8`` mask and passed to native peak search, where
@@ -751,9 +760,12 @@ class Indexer:
 
         Notes
         -----
-        For HDF5 input, detector ``start`` and ``group`` values from the file
-        take precedence over method arguments when present; ``depth`` works
-        the other way, the argument overriding the file. A retained image can
+        For HDF5 and scan-frame input, detector ``start`` and ``group``
+        values from the file take precedence over method arguments when
+        present; ``depth`` works the other way, the argument overriding the
+        file. A scan frame is read exactly: one frame, its point's detector
+        metadata, and its physical depth. The rest of the stack is not
+        loaded. A retained image can
         alias a contiguous array supplied by the caller. Native peak search
         uses a separate working copy, so smoothing does not modify that array.
 
@@ -771,13 +783,22 @@ class Indexer:
         raises an exception.
         """
         input_image = None
+        scan_frame = None
         supplied_metadata = metadata.as_dict() if isinstance(metadata, FrameMetadata) else dict(metadata or {})
-        if isinstance(frame, (str, Path)):
-            input_image = str(frame)
-            try:
-                source, file_metadata, file_processing = read_h5_frame(frame)
-            except (OSError, KeyError, ValueError) as error:
-                raise InputError(f"cannot read HDF5 frame {frame}: {error}") from error
+        if isinstance(frame, (str, Path, ScanFrame)):
+            if isinstance(frame, ScanFrame):
+                scan_frame = frame
+                input_image = frame.path
+                try:
+                    source, file_metadata, file_processing = read_scan_frame(frame)
+                except (OSError, KeyError, ValueError, IndexError) as error:
+                    raise InputError(f"cannot read {frame}: {error}") from error
+            else:
+                input_image = str(frame)
+                try:
+                    source, file_metadata, file_processing = read_h5_frame(frame)
+                except (OSError, KeyError, ValueError) as error:
+                    raise InputError(f"cannot read HDF5 frame {frame}: {error}") from error
             supplied_metadata = {**file_metadata, **supplied_metadata}
             start = file_processing.get("start", start)
             group = file_processing.get("group", group)
@@ -934,6 +955,7 @@ class Indexer:
                 indexing_seconds=indexing_seconds,
                 metadata=supplied_metadata,
                 input_image=input_image,
+                source=scan_frame,
                 image_shape=image.shape,
                 start=start,
                 group=group,

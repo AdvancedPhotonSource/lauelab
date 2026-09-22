@@ -460,6 +460,76 @@ int laue_recon_stripe(laue_recon *recon, const void *images, int pixel_type,
     return LAUE_OK;
 }
 
+/* Pixels summed into one partial before partials combine, so that a double
+   total's rounding error stays near the pairwise bound at any stripe size. */
+#define STORE_BLOCK 1024
+
+#define STORE_STRIPE(T, SUM, CONVERT)                                          \
+    do {                                                                       \
+        T *out = stored;                                                       \
+        SUM *dsum = depth_sums;                                                \
+        SUM *psum = pixel_sums;                                                \
+        size_t d, b;                                                           \
+        _Pragma("omp parallel for schedule(static) num_threads(n_threads)")    \
+        for (d = 0; d < n_depths; ++d) {                                       \
+            const double *row = values + d * n_pixels;                         \
+            T *orow = out + d * n_pixels;                                      \
+            SUM total = 0;                                                     \
+            size_t p0;                                                         \
+            for (p0 = 0; p0 < n_pixels; p0 += STORE_BLOCK) {                   \
+                size_t p, p1 = p0 + STORE_BLOCK < n_pixels ? p0 + STORE_BLOCK : n_pixels; \
+                SUM partial = 0;                                               \
+                for (p = p0; p < p1; ++p) {                                    \
+                    double v = row[p] * rescale;                               \
+                    T s;                                                       \
+                    CONVERT;                                                   \
+                    orow[p] = s;                                               \
+                    partial += s;                                              \
+                }                                                              \
+                total += partial;                                              \
+            }                                                                  \
+            if (dsum) dsum[d] = total;                                         \
+        }                                                                      \
+        if (!psum) break;                                                      \
+        _Pragma("omp parallel for schedule(static) num_threads(n_threads)")    \
+        for (b = 0; b < (n_pixels + STORE_BLOCK - 1) / STORE_BLOCK; ++b) {     \
+            size_t d, p, p0 = b * STORE_BLOCK;                                 \
+            size_t p1 = p0 + STORE_BLOCK < n_pixels ? p0 + STORE_BLOCK : n_pixels; \
+            for (p = p0; p < p1; ++p) psum[p] = 0;                             \
+            for (d = 0; d < n_depths; ++d) {                                   \
+                const T *orow = out + d * n_pixels;                            \
+                for (p = p0; p < p1; ++p) psum[p] += orow[p];                  \
+            }                                                                  \
+        }                                                                      \
+    } while (0)
+
+/* Saturate at the type limits, then let the cast truncate toward zero. */
+#define CONVERT_INT(T, MIN, MAX)                                               \
+    if (v != v) s = 0;                                                         \
+    else if (v >= (double)(MAX)) s = (MAX);                                    \
+    else if (v <= (double)(MIN)) s = (MIN);                                    \
+    else s = (T)v
+
+int laue_recon_store_stripe(const double *values, size_t n_depths, size_t n_pixels,
+                            double rescale, int stored_type, void *stored,
+                            void *depth_sums, void *pixel_sums, int n_threads)
+{
+    if (!values || !stored || n_threads < 1 || n_depths < 1 || n_pixels < 1
+        || n_depths > SIZE_MAX / n_pixels)
+        return LAUE_INVALID_ARGUMENT;
+    switch (stored_type) {
+    case LAUE_PIXEL_F64: STORE_STRIPE(double, double, s = v); break;
+    case LAUE_PIXEL_F32: STORE_STRIPE(float, double, s = (float)v); break;
+    case LAUE_PIXEL_I32: STORE_STRIPE(int32_t, int64_t, CONVERT_INT(int32_t, INT32_MIN, INT32_MAX)); break;
+    case LAUE_PIXEL_I16: STORE_STRIPE(int16_t, int64_t, CONVERT_INT(int16_t, INT16_MIN, INT16_MAX)); break;
+    case LAUE_PIXEL_U16: STORE_STRIPE(uint16_t, int64_t, CONVERT_INT(uint16_t, 0, UINT16_MAX)); break;
+    case LAUE_PIXEL_I8: STORE_STRIPE(int8_t, int64_t, CONVERT_INT(int8_t, INT8_MIN, INT8_MAX)); break;
+    case LAUE_PIXEL_U8: STORE_STRIPE(uint8_t, int64_t, CONVERT_INT(uint8_t, 0, UINT8_MAX)); break;
+    default: return LAUE_INVALID_ARGUMENT;
+    }
+    return LAUE_OK;
+}
+
 int laue_recon_n_depths(const laue_recon *recon)
 {
     return recon ? recon->n_depths : 0;

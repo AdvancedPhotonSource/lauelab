@@ -46,6 +46,9 @@ The preferred API either indexes one frame with `index_frame` or reuses an
 
 .. autofunction:: load_mask
 
+.. autoclass:: ScanFrame
+   :members:
+
 .. autodata:: lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES
    :no-value:
 ```

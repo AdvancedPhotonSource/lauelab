@@ -4,10 +4,76 @@
 
 from __future__ import annotations
 
-from numbers import Real
+from dataclasses import dataclass
+from numbers import Integral, Real
+import os
 from pathlib import Path
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class ScanFrame:
+    """One stored frame of a reconstruction-scan file.
+
+    Identifies a frame by scan file path, point ID, and depth index. The
+    reference can be pickled, passed to a worker process, and saved with
+    indexing results. File handles are opened locally when reading the frame.
+
+    Parameters
+    ----------
+    path : pathlib.Path or str
+        The reconstruction-scan file written by
+        :func:`~lauelab.reconstruct.reconstruct_scan`.
+    point_id : str
+        Point ID within that run.
+    depth_index : int
+        Zero-based position of the frame in the point's depth stack. Its
+        physical depth in µm is read from the file.
+    """
+
+    path: str
+    point_id: str
+    depth_index: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", os.fspath(self.path))
+        if not isinstance(self.point_id, str) or not self.point_id:
+            raise ValueError("point_id must be a non-empty string")
+        if isinstance(self.depth_index, (bool, np.bool_)) or not isinstance(self.depth_index, Integral):
+            raise TypeError("depth_index must be an integer")
+        if self.depth_index < 0:
+            raise ValueError("depth_index must be nonnegative")
+        object.__setattr__(self, "depth_index", int(self.depth_index))
+
+
+def read_scan_frame(frame: ScanFrame):
+    """Read one stored frame, its metadata, and its processing values.
+
+    Returns the same ``(image, metadata, processing)`` triple as
+    :func:`read_h5_frame`. Only the selected frame is read from the file.
+    """
+    from lauelab.reconstruct import ScanReader
+
+    with ScanReader(frame.path) as scan:
+        point = scan.point(frame.point_id)
+        image = point.frame(frame.depth_index)
+        entry = point.entry
+        metadata = {
+            "scan_number": entry.scan_number,
+            "energy_kev": entry.energy_kev,
+            "detector_id": point.detector_id or None,
+            "sample_position": (
+                entry.sample_position if np.isfinite(entry.sample_position).all() else None
+            ),
+        }
+        metadata = {name: value for name, value in metadata.items() if value is not None}
+        processing = {
+            "start": point.start,
+            "group": point.group,
+            "depth": float(point.depth_um[frame.depth_index]),
+        }
+    return image, metadata, processing
 
 
 def roi_to_detector_pixels(points, start, group):

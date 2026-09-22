@@ -122,9 +122,12 @@ The workflow does not publish or keep build artifacts.
 
 Files whose layout `lauelab` defines follow one set of conventions for root attributes, versioning, units, and ragged data. See [HDF5 file conventions](hdf5-conventions.md).
 
+See [Reconstruction scan format](reconstruction-scan-format.md) for the single-file reconstruction layout, frame selection, stored values, and ROI definitions.
+
 ```{toctree}
 :hidden:
 :maxdepth: 1
 
 hdf5-conventions
+reconstruction-scan-format
 ```

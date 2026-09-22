@@ -18,7 +18,7 @@ from lauelab._results_layout import (
     FORMAT, SUPPORTED_VERSIONS, VERSION, write_crystal, write_dataset,
 )
 from lauelab.analysis import lattice_params_to_reciprocal
-from lauelab.indexing import Atom, Cell, Crystal, Geometry
+from lauelab.indexing import Atom, Cell, Crystal, Geometry, InvalidResultsFile, ScanFrame
 from lauelab.indexing.indexer import PEAK_DTYPE
 from lauelab.indexing.results import validate_results_file
 
@@ -32,6 +32,23 @@ def _text(value) -> str:
 
 def _strings(dataset) -> tuple[str | None, ...]:
     return tuple(value or None for value in dataset.asstr()[...])
+
+
+def _sources(source) -> tuple[ScanFrame | None, ...] | None:
+    """Rebuild each frame's ScanFrame; a file written before the datasets existed has none."""
+    if ("frames/source_point_ids" in source) != ("frames/source_depth_indices" in source):
+        raise InvalidResultsFile(
+            "source_point_ids and source_depth_indices must both be present or both absent"
+        )
+    if "frames/source_point_ids" not in source:
+        return None
+    point_ids = source["frames/source_point_ids"].asstr()[...]
+    depth_indices = source["frames/source_depth_indices"][...]
+    paths = source["frames/input_images"].asstr()[...]
+    return tuple(
+        ScanFrame(path, point_id, int(depth_index)) if point_id else None
+        for path, point_id, depth_index in zip(paths, point_ids, depth_indices)
+    )
 
 
 def _load_crystal(source) -> Crystal | None:
@@ -258,13 +275,11 @@ def convert_xml(xml_path, output_path=None, *, geometry=None, overwrite=False) -
     -----
     The results file is written under a unique ``<name>.partial-*`` file in
     the destination's directory, closed, validated, and only then renamed to
-    ``output_path``. A reader never sees a half-written destination, a
-    failure at any stage removes that partial file and leaves an existing
-    destination untouched, and two conversions of the same destination cannot
-    overwrite each other's work: the second to finish fails with
-    ``FileExistsError`` unless ``overwrite`` is set. A document without geometry or crystal context
-    still converts; the summary from ``validate_results_file`` reports what is
-    present.
+    ``output_path``. A failure removes the partial file and preserves any
+    existing destination. If two conversions target the same path, the second
+    to finish raises ``FileExistsError`` unless ``overwrite`` is set.
+    Documents with missing geometry or crystal context can be converted;
+    ``validate_results_file`` reports which context is present.
     """
     xml_path = Path(xml_path)
     output_path = xml_path.with_suffix(".h5") if output_path is None else Path(output_path)
@@ -317,6 +332,8 @@ def _write_converted(output_path, xml_path, dataset, frame_values, embedded_geom
             "energies_kev": dataset.energies_kev,
             "detector_ids": [value or "" for value in dataset.detector_ids],
             "input_images": [value or "" for value in dataset.input_images],
+            "source_point_ids": ["" if value is None else value.point_id for value in dataset.sources],
+            "source_depth_indices": [-1 if value is None else value.depth_index for value in dataset.sources],
             "image_shapes": dataset.image_shapes,
             "roi_starts": dataset.starts,
             "roi_groups": dataset.groups,
@@ -407,6 +424,7 @@ def load_results(path, *, geometry=None, frame_ids=None) -> VisualizationDataset
             starts=source["frames/roi_starts"][...],
             groups=source["frames/roi_groups"][...],
             input_images=_strings(source["frames/input_images"]),
+            sources=_sources(source),
             images=(None,) * len(ids),
             peak_frame_indices=_owners(peak_offsets, len(peaks), "peak"),
             peak_indices=np.arange(len(peaks)) - np.repeat(peak_offsets[:-1], np.diff(peak_offsets)),

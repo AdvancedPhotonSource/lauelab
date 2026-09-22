@@ -21,7 +21,8 @@ EXPECTED_PATHS = {
     "/crystal/atom_positions", "/crystal/atom_occupancies", "/geometry/xml",
     "/frames/frame_ids", "/frames/sample_positions", "/frames/depths",
     "/frames/scan_numbers", "/frames/energies_kev", "/frames/detector_ids",
-    "/frames/input_images", "/frames/titles", "/frames/sample_names",
+    "/frames/input_images", "/frames/source_point_ids", "/frames/source_depth_indices",
+    "/frames/titles", "/frames/sample_names",
     "/frames/user_names", "/frames/beamlines", "/frames/dates_exposed",
     "/frames/ccd_shutters", "/frames/mono_modes", "/frames/image_shapes", "/frames/roi_starts",
     "/frames/roi_groups", "/frames/n_peaks", "/frames/n_patterns",
@@ -82,6 +83,12 @@ def test_shapes_units_chunks_and_scientific_attributes():
         "rows": "a*,b*,c*",
         "includes_two_pi": True,
     }
+
+
+def test_only_the_scan_source_datasets_are_optional():
+    optional = {name for name, spec in DATASETS.items() if spec.optional}
+    assert optional == {"/frames/source_point_ids", "/frames/source_depth_indices"}
+    assert DATASETS["/frames/source_depth_indices"].dtype == np.dtype("<i4")
 
 
 def test_layout_is_immutable():

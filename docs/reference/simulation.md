@@ -1,6 +1,6 @@
 # Reflection simulation
 
-The public reflection-simulation API has two symbols. It accepts package crystal and detector models and returns backend-neutral NumPy arrays.
+Use `simulate_reflections` to predict reflections from a crystal orientation and detector geometry. The returned `SimulationResult` contains NumPy arrays of reflection indices, positions, energies, and relative intensities.
 
 See [Simulate detector reflections](../guides/simulation.md) for input selection, numerical behavior, and examples.
 
@@ -13,4 +13,4 @@ See [Simulate detector reflections](../guides/simulation.md) for input selection
 .. autofunction:: simulate_reflections
 ```
 
-`SimulationResult` contains no backend objects or status flags. The implementation does not expose a backend choice or a fallback.
+Simulation failures raise exceptions. See the guide for input requirements and calculation limits.

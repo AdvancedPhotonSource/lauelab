@@ -22,6 +22,7 @@ int main(int argc, char **argv)
     unsigned char mask[ROWS * COLS];
     double wire_positions[(IMAGES + 1) * 3];
     double *output;
+    void *stored, *depth_sums, *pixel_sums;
     double elapsed;
     char error[256];
     int n_depths;
@@ -115,6 +116,35 @@ int main(int argc, char **argv)
         REQUIRE(laue_recon_stripe(recon, images, LAUE_PIXEL_U16, IMAGES, 0, ROWS,
                                   NULL, NULL, mask, output, 2, &elapsed) == LAUE_OK);
     }
+
+    stored = malloc((size_t)n_depths * ROWS * COLS * sizeof(double));
+    depth_sums = malloc((size_t)n_depths * sizeof(double));
+    pixel_sums = malloc(ROWS * COLS * sizeof(double));
+    REQUIRE(stored != NULL && depth_sums != NULL && pixel_sums != NULL);
+    output[0] = 1e300;
+    output[1] = -1e300;
+    output[2] = 0.0 / 0.0;
+    REQUIRE(laue_recon_store_stripe(NULL, (size_t)n_depths, ROWS * COLS, 1.0, LAUE_PIXEL_U16,
+                                    stored, depth_sums, pixel_sums, 2) == LAUE_INVALID_ARGUMENT);
+    REQUIRE(laue_recon_store_stripe(output, (size_t)n_depths, ROWS * COLS, 1.0, LAUE_PIXEL_U16,
+                                    NULL, depth_sums, pixel_sums, 2) == LAUE_INVALID_ARGUMENT);
+    REQUIRE(laue_recon_store_stripe(output, 0, ROWS * COLS, 1.0, LAUE_PIXEL_U16,
+                                    stored, depth_sums, pixel_sums, 2) == LAUE_INVALID_ARGUMENT);
+    REQUIRE(laue_recon_store_stripe(output, (size_t)n_depths, ROWS * COLS, 1.0, 99,
+                                    stored, depth_sums, pixel_sums, 2) == LAUE_INVALID_ARGUMENT);
+    REQUIRE(laue_recon_store_stripe(output, (size_t)n_depths, ROWS * COLS, 1.0, LAUE_PIXEL_U16,
+                                    stored, depth_sums, pixel_sums, 0) == LAUE_INVALID_ARGUMENT);
+    for (index = 0; index < 7; ++index) {
+        static const int types[] = {LAUE_PIXEL_U16, LAUE_PIXEL_F64, LAUE_PIXEL_I32, LAUE_PIXEL_F32,
+                                    LAUE_PIXEL_I16, LAUE_PIXEL_U8, LAUE_PIXEL_I8};
+        REQUIRE(laue_recon_store_stripe(output, (size_t)n_depths, ROWS * COLS, 255.0, types[index],
+                                        stored, depth_sums, pixel_sums, 2) == LAUE_OK);
+        REQUIRE(laue_recon_store_stripe(output, (size_t)n_depths, ROWS * COLS, 1.0, types[index],
+                                        stored, NULL, NULL, 1) == LAUE_OK);
+    }
+    free(stored);
+    free(depth_sums);
+    free(pixel_sums);
 
     free(output);
     laue_recon_free(recon);

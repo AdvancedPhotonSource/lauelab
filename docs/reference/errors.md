@@ -19,5 +19,7 @@ native indexing failures. Native allocation failures use Python's built-in
 
 .. autoexception:: InvalidResultsFile
 
+.. autoexception:: InvalidScanFile
+
 .. autoexception:: WorkerError
 ```

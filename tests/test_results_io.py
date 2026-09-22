@@ -25,9 +25,10 @@ def _assert_visualization_equal(actual, expected):
     assert actual.frame_ids == expected.frame_ids
     assert actual.detector_ids == expected.detector_ids
     assert actual.input_images == expected.input_images
+    assert actual.sources == expected.sources
     for item in fields(VisualizationDataset):
         name = item.name
-        if name in {"frame_ids", "detector_ids", "input_images", "images", "crystal", "geometry"}:
+        if name in {"frame_ids", "detector_ids", "input_images", "sources", "images", "crystal", "geometry"}:
             continue
         actual_value = getattr(actual, name)
         expected_value = getattr(expected, name)

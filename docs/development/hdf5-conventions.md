@@ -1,6 +1,6 @@
 # HDF5 file conventions
 
-These conventions apply to HDF5 files whose layout `lauelab` defines. The indexing results file follows them, and a future single-file reconstruction output must too, so that one reader policy covers both. Detector frames and per-depth reconstruction outputs follow the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
+These conventions apply to HDF5 files whose layout `lauelab` defines. The indexing results file and the [reconstruction scan file](reconstruction-scan-format.md) share these conventions. Detector frames and per-depth reconstruction outputs follow the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
 
 ## Root attributes
 
@@ -16,7 +16,9 @@ A reader checks `format` and `version` before it reads anything else.
 
 ## Versioning
 
-`version` is one integer. Adding a dataset or an attribute does not change it, and a reader ignores names it does not know. Removing, renaming, or reinterpreting a dataset increments it, and a reader raises for a version it does not support. Record the reason for a version change in the layout module and the documentation in the same commit.
+The integer `version` changes when a dataset is removed, renamed, or given a different meaning. Readers reject unsupported versions.
+
+Datasets and attributes can be added within the current version. Readers ignore unrecognized fields, and the layout module marks newly added datasets as optional so that earlier files remain readable. An absent optional dataset represents an unavailable value. Record the reason for a version change in the layout module and the documentation in the same commit.
 
 ## Units
 
@@ -24,7 +26,7 @@ Every dimensioned dataset carries a `units` attribute using the symbols from the
 
 ## Ragged data
 
-Store variable-length per-record data as one flat dataset plus an offsets dataset that starts at zero, ends at the total row count, and has one more entry than there are owners. The rows of owner `i` are `offsets[i]` to `offsets[i + 1]`. Do not use variable-length datasets or region references for numeric data; they cannot be read as one array.
+Store variable-length records in one flat dataset with an offsets array. The offsets start at zero, end at the total row count, and contain one more entry than the number of records. Record `i` occupies rows `offsets[i]:offsets[i + 1]`. Do not use variable-length datasets or region references for numeric data; they cannot be read as one array.
 
 ## Storage
 
@@ -32,8 +34,12 @@ Store datasets uncompressed unless the writer offers compression as an option; c
 
 ## Validation and publication
 
-The format marker identifies a file; it does not certify it. A lauelab-defined format comes with a validator that checks, with bounded reads, that every dataset of the layout is present with its dtype and shape, that row counts agree, and that offsets partition their rows; for indexing results that is `lauelab.indexing.validate_results_file`; a future single-file reconstruction format must ship its own. A producer writes to the destination's `.partial` name, closes the file, validates it, and renames it into place with `lauelab.publish_file`, so a reader never sees an incomplete file under the final name. A writer that fails mid-record does not attempt repair; it marks itself failed and the file is rewritten.
+Each lauelab-defined format provides structural validation in addition to its format marker. `lauelab.indexing.validate_results_file` and `lauelab.reconstruct.validate_scan_file` check required datasets, dtypes, shapes, row counts, and applicable offset arrays using bounded reads.
+
+Write output to the destination's `.partial` path, then close and validate the file before renaming it with `lauelab.publish_file`. This makes the final path available only after validation succeeds. A mid-record write failure invalidates the partial file and requires a rewrite.
 
 ## Layout definition
 
-Define the complete layout of a format in one module: every dataset path, dtype, shape, units, and fixed attribute. The writer, reader, converter, and reference documentation read that one table, and a test compares it against the documented layout. The indexing results layout is `lauelab/_results_layout.py`; the shared root-attribute and version helpers are `lauelab/_hdf5.py`.
+Define the complete layout of a format in one module: every dataset path, dtype, shape, units, and fixed attribute. The writer, reader, converter, and reference documentation read that one table, and a test compares it against the documented layout. The indexing results layout is `lauelab/_results_layout.py`, and the reconstruction scan layout is `lauelab/reconstruct/_scan_layout.py`; the shared root-attribute and version helpers are `lauelab/_hdf5.py`.
+
+The optional indexing source selectors `frames/source_point_ids` and `frames/source_depth_indices` must appear together. Old files with neither remain readable. A scan source requires a non-empty path and point ID and a nonnegative depth index. An ordinary frame uses an empty source point ID and index `-1`. Validation rejects missing or inconsistent source selectors.

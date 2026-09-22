@@ -16,7 +16,7 @@ The shape is `(ny, nx)`. NumPy accesses a pixel as `frame[y, x]`, while fitted p
 
 Raw 34-ID-E frames are `numpy.uint16`. Reconstructed frames can be `numpy.int32` (both wire edges), `numpy.float64` (in-memory reconstruction), or another type chosen at write time, so peak search also accepts `uint8`, `int8`, `int16`, `int32`, `float32`, and `float64`. {data}`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES` lists them. Every supported element converts to a double exactly, so an `int32` frame and a `uint16` frame with the same values give identical peaks. A frame stored in the non-native byte order is byte-swapped to a native copy of the same dtype. Floating-point frames must be finite.
 
-Any other dtype, such as `uint32`, `int64`, or `bool`, raises `InputError`. Nothing is cast, clipped, or rescaled implicitly: convert intentionally before the call so that the change is visible in your application.
+Any other dtype, such as `uint32`, `int64`, or `bool`, raises `InputError`. Convert unsupported arrays explicitly before calling the indexer, choosing the dtype and scaling appropriate to your data.
 
 The indexer makes a C-contiguous copy only when the supplied array is not already contiguous.
 
@@ -28,7 +28,7 @@ Pass a path to read a frame from `entry1/data/data`:
 result = indexer.index("frame.h5")
 ```
 
-This is support for a specific acquisition layout, not arbitrary HDF5. A missing image dataset raises `KeyError`, and a file-open failure raises `OSError`.
+The file must follow the 34-ID-E acquisition layout. A missing image dataset raises `KeyError`, and a file-open failure raises `OSError`.
 
 When present, the loader reads processing values from:
 
@@ -41,9 +41,21 @@ When present, the loader reads processing values from:
 
 HDF5 `start` and `group` values take precedence over values passed to `index()`.
 
-Depth works the other way. When `entry1/depth` is present and its first value is finite, that value is the frame's physical depth in µm unless `depth` is passed explicitly. An explicit finite `depth`, including `0.0`, overrides the file. Reconstructed per-depth files written by {class}`~lauelab.reconstruct.Reconstructor` and by `reconstructN_cpu` carry this dataset; raw frames normally do not, and a missing or non-finite value means no depth. `FrameResult.depth` records the value that was used. This matches the LaueGo `peaksearch` program, which reads the same dataset into its `$depth` header.
+The optional `entry1/depth` dataset supplies the frame's physical depth in µm from its first entry, provided that entry is finite and `depth` was not passed explicitly. An explicit finite `depth`, including `0.0`, overrides the file. Reconstructed per-depth files written by {class}`~lauelab.reconstruct.Reconstructor` and by `reconstructN_cpu` carry this dataset; raw frames normally do not, and a missing or non-finite value means no depth. `FrameResult.depth` records the value that was used. This matches the LaueGo `peaksearch` program, which reads the same dataset into its `$depth` header.
 
-Selecting a reconstructed frame by its position in a depth stack is not the same as its physical depth. Read the depth from the file or the reconstruction result, and pass `depth` only when you intend to override it.
+For a reconstructed frame, obtain the physical depth from the file or the reconstruction result's `depth_um` array. Pass `depth` explicitly when you need to override that value.
+
+## Scan frames
+
+A {class}`~lauelab.indexing.ScanFrame` selects one stored frame of a file written by {func}`~lauelab.reconstruct.reconstruct_scan` by point ID and zero-based depth index:
+
+```python
+from lauelab.indexing import ScanFrame
+
+result = indexer.index(ScanFrame("run/scan.h5", "scan12_p1", 30))
+```
+
+Indexing reads the selected frame in its stored dtype, including signed types. Point metadata supplies `start`, `group`, the detector identifier, and physical depth; an explicit `depth` argument overrides the stored depth. The catalog supplies the scan number, sample position, and incident energy. `ScanFrame` is serializable and can be passed to indexing workers, which open the file locally. `FrameResult.source` returns the reference, and `FrameResult.input_image` is the scan file's path. See [Reconstruct a wire scan](reconstruction.md) for the file itself.
 
 ## Region and grouping
 
@@ -134,4 +146,4 @@ The result's peak and pattern arrays are Python-owned copies. Native result stor
 - A mask with a different shape
 - An HDF5 detector identifier that does not match the selected detector
 
-A no-peak result is not an input failure. It returns an empty peak array and no patterns.
+When peak search finds no peaks, the call succeeds with an empty peak array and no patterns.

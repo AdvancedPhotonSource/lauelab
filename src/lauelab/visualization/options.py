@@ -51,6 +51,22 @@ SURFACE_PRESETS = tuple(
     for name in SurfaceFrame.aps_34ide_presets()
 )
 
+DEPTH_AXIS_OPTIONS = (
+    Choice("depth", "Depth (um)"),
+    Choice("index", "Depth index"),
+)
+
+INTENSITY_OPTIONS = (
+    Choice("sum", "Sum"),
+    Choice("normalized", "Normalized to maximum"),
+)
+
+REFERENCE_OPTIONS = (
+    Choice("sum_reconstructed", "Sum of reconstructed frames"),
+    Choice("first_raw", "First raw frame"),
+    Choice("sum_raw", "Sum of raw frames"),
+)
+
 PALETTE_OPTIONS = (
     Choice("Viridis", "Viridis"),
     Choice("Plasma", "Plasma"),

@@ -53,6 +53,19 @@ class InvalidResultsFile(LaueError, ValueError):
     """
 
 
+class InvalidScanFile(LaueError, ValueError):
+    """A reconstruction-scan HDF5 file is structurally inconsistent or unpublished.
+
+    Raised by :func:`~lauelab.reconstruct.validate_scan_file` when the format
+    marker or version is wrong, the run is still running or failed, a dataset
+    is missing or has the wrong dtype or shape, catalog rows disagree, a point
+    status is not terminal, point identities repeat, or a point group disagrees
+    with its catalog row. A file that cannot be opened at all raises
+    ``OSError`` instead. A valid file can still hold points that are not
+    complete.
+    """
+
+
 class WorkerError(LaueError, RuntimeError):
     """Failure of the parallel indexing machinery rather than of one input.
 

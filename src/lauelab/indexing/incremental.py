@@ -17,6 +17,7 @@ from typing import Callable, Hashable, Iterable, Iterator, Mapping
 
 import numpy as np
 
+from ._frame import ScanFrame
 from .errors import InputError, NumericalIndexingError, WorkerError
 
 # File-reading errors are normalized to InputError at the reader boundary.
@@ -31,8 +32,10 @@ class FrameInput:
     Parameters
     ----------
     frame
-        Two-dimensional array with a supported dtype, or path to a supported
-        HDF5 frame. An array is sent to the worker with the task.
+        Two-dimensional array with a supported dtype, path to a supported
+        HDF5 frame, or :class:`~lauelab.indexing.ScanFrame`. An array is sent
+        to the worker with the task; a path or scan frame is opened inside the
+        worker.
     input_id
         Caller-defined stable identity carried unchanged into the outcome.
         `None` when the caller has no identity beyond the input position.
@@ -46,7 +49,7 @@ class FrameInput:
         Optional frame metadata object or mapping.
     """
 
-    frame: np.ndarray | str | Path
+    frame: np.ndarray | str | Path | ScanFrame
     input_id: Hashable | None = None
     start: tuple[int, int] = (0, 0)
     group: tuple[int, int] = (1, 1)

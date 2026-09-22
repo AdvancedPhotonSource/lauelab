@@ -37,7 +37,7 @@ The returned `qhat` values use the 34-ID-E laboratory convention implemented by 
 
 When you supply a crystal and the frame contains at least two peaks, the orientation indexer compares the measured scattering-vector directions with reflections calculated from the crystal description. It can return zero, one, or multiple candidate patterns.
 
-Each {class}`~lauelab.indexing.Pattern` contains an orientation, reciprocal-lattice information, assigned Miller indices, and zero-based indices back into the frame's peak array. No returned pattern is a valid outcome, not an exception.
+Each {class}`~lauelab.indexing.Pattern` contains an orientation, reciprocal-lattice information, assigned Miller indices, and zero-based indices back into the frame's peak array. A successful call can return zero patterns.
 
 See [Crystal indexing](algorithms/crystal-indexing.md) for supported algorithm details.
 

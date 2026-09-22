@@ -6,7 +6,7 @@ Use {meth}`~lauelab.analysis.SimulationResult.missing_from` when you need only d
 
 ## Supply the scientific inputs
 
-Simulation uses package-owned crystal and detector models. The reciprocal matrix normally comes from an indexed {class}`~lauelab.indexing.Pattern`:
+Pass a `Crystal` and a `DetectorGeometry` to configure the simulation. The reciprocal matrix normally comes from an indexed {class}`~lauelab.indexing.Pattern`:
 
 ```python
 from lauelab.analysis import simulate_reflections
@@ -62,7 +62,7 @@ The reciprocal matrix must be finite and nonsingular. See the [results guide](re
 
 Rows at the same array index describe one reflection. Construction copies the arrays and marks them read-only. A valid result with no accepted reflections uses shapes `(0, 3)`, `(0, 3)`, `(0, 2)`, `(0,)`, and `(0,)`.
 
-`relative_intensity` is not an absolute intensity. It is not calibrated for detector response, exposure, incident spectrum, or other experimental corrections. Use it to compare rows from the same simulation under the same inputs.
+Use `relative_intensity` to compare reflections within one simulation. These values are uncalibrated and exclude detector response, exposure, incident spectrum, and other experimental corrections.
 
 ## Derive missing directions
 
@@ -94,7 +94,7 @@ Simulation keeps only finite intersections inside the selected full detector. RO
 
 ## Handle errors and limits
 
-The function uses this exception contract:
+Simulation reports input and calculation errors with these exceptions:
 
 | Exception | Meaning |
 |---|---|
@@ -102,16 +102,14 @@ The function uses this exception contract:
 | `ValueError` | An input has an invalid shape, range, or finite-value constraint. |
 | `RuntimeError` | The private simulator cannot load, execute, return valid numbers, or finish before its candidate limit. |
 
-An atomless `Crystal` is valid for some indexing work, but simulation rejects it. A simulation that runs successfully and finds no accepted reflections returns an empty result instead of raising.
+Simulation requires a `Crystal` with atoms. A successful calculation with no accepted reflections returns an empty result. Simulator failures and candidate-limit exhaustion raise `RuntimeError`; the function provides neither partial patterns nor a fallback calculation.
 
-The function does not select a backend and does not fall back to a simpler reflection enumerator. A backend failure raises `RuntimeError`. Candidate-limit exhaustion also raises instead of returning a partial pattern.
-
-## Know the validation scope
+## Validation and model limits
 
 The public crystal model accepts International Tables space-group numbers 1 through 230. Tests exercise the code paths for all seven crystal systems. The reviewed numerical fixtures cover Ni, CdTe, and synthetic Si. This coverage does not establish experimental validation for every space group or material.
 
 The private simulator uses atom identity, fractional position, and occupancy. The public {class}`~lauelab.indexing.Atom` model does not represent thermal displacement, valence, Wyckoff metadata, or other extended structure fields.
 
-The current implementation contains a private snapshot of the JZT simulation code. Normal package imports do not load it. Its types are not public, and a later implementation can replace it without changing `SimulationResult` or `simulate_reflections()`.
+The JZT-based simulator loads when simulation is first requested. Its inputs and outputs are exposed through the package models documented here.
 
 See the [simulation API reference](../reference/simulation.md) for complete signatures.

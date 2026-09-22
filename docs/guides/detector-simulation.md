@@ -18,7 +18,7 @@ detector_data = prepare_detector_view(
 )
 ```
 
-The default value of `simulation_energy_range_kev` is `None`. The default performs no simulation and preserves the ordinary detector-view workflow.
+Set `simulation_energy_range_kev` to enable simulation over an inclusive energy interval in keV. With the default `None`, the view displays the measured and indexed data.
 
 Simulation requires the shared `Crystal` and geometry in the source data. {meth}`~lauelab.visualization.ResultSet.from_indexer` copies both references from an `Indexer`. LaueGo XML input may need explicit geometry and crystal context before it can simulate reflections.
 
@@ -60,9 +60,9 @@ figure_without_simulation = plot_detector_view(
 )
 ```
 
-`show_simulated` changes rendering only. Passing prepared data never runs the simulator again. Application-level persistence across processes or callbacks remains the application's responsibility.
+`show_simulated` controls the visibility of the prepared reflections. Reuse `detector_data` to change the display without repeating the simulation. Applications can cache this object between callbacks.
 
-An empty simulation layer is valid. The renderer does not create an empty trace.
+If a simulation layer contains no reflections, the figure omits its trace.
 
 ## Render and customize simulated reflections
 
@@ -107,15 +107,15 @@ for reflection_id in selection.reflection_ids:
 
 `reflection_ids` uses stable `(frame_id, pattern_index, h, k, l)` tuples. The parser removes duplicates in event order. Existing `frame_ids`, `pattern_ids`, and `peak_ids` remain unchanged for current traces.
 
-## Propagate simulation failures
+## Handle simulation failures
 
-Preparation and rendering do not hide simulation errors. Missing crystal context raises `ValueError` only when simulation is requested. Private simulation failures propagate as `RuntimeError`.
+Simulation errors propagate through preparation and rendering. Missing crystal context raises `ValueError` only when simulation is requested. Private simulation failures propagate as `RuntimeError`.
 
-Do not replace an error with an empty overlay. An empty simulation layer means that a valid simulation found no missing on-frame directions.
+Keep failed simulations distinguishable from empty results: an empty layer indicates a successful calculation with no missing directions on the frame.
 
-## Keep application integration outside the package
+## Use prepared data in an application
 
-An application can prepare data in one callback and render or inspect it later. A future portal migration can use the same package-only boundary:
+Prepare the data once, then use it for rendering and selection handling:
 
 ```python
 prepared = prepare_detector_view(
@@ -128,6 +128,6 @@ figure = plot_detector_view(prepared, show_simulated=show_simulated)
 selection = selection_from_plotly(event_data)
 ```
 
-The package does not define Dash controls, callback caching, portal overlay models, or backend-selection settings. Those choices belong to the application.
+Configure controls, callback caching, and selection state in the application.
 
 See the [visualization API reference](../reference/visualization.md) for the prepared model and renderer signatures.

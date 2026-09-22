@@ -6,7 +6,7 @@ Peak search converts a detector intensity array into fitted peak positions and s
 
 The stage receives a two-dimensional frame with shape `(ny, nx)` and one of the [supported dtypes](../../guides/frame-input.md); each pixel enters as its exact double value. If `smooth=True`, the native implementation applies Gaussian smoothing before thresholding and fitting.
 
-A mask has the same shape as the frame. Zero mask values leave pixels available. Nonzero values replace the corresponding working pixels with a background estimate before detection. The source array retained in `FrameResult.image` is not this modified working buffer.
+A mask has the same shape as the frame. Zero mask values leave pixels available. Nonzero values replace the corresponding working pixels with a background estimate before detection. `FrameResult.image` retains the original input values.
 
 ## Threshold selection
 
@@ -26,7 +26,7 @@ Automatic thresholding returns a valid empty result when the image has no unmask
 
 The native stage finds connected regions above the threshold, fits each candidate in a square neighborhood, and accepts fits that satisfy configured width, displacement, and residual checks. `peak_shape` selects a Lorentzian or Gaussian model.
 
-`boxsize` is the half-width of the fitting neighborhood. The implementation clips a neighborhood at image boundaries rather than reading outside the frame.
+`boxsize` is the half-width of the fitting neighborhood. Fitting neighborhoods are clipped to the image boundaries.
 
 After fitting, nearby accepted peaks are filtered according to `min_separation`. The implementation compares their fitted x and y separations and removes the lower-intensity candidate when both are below the configured value.
 

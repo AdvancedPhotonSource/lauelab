@@ -128,7 +128,9 @@ change grows the public surface, say so explicitly and justify it.
   backend), coloring.
 - `src/lauelab/visualization` — Plotly figures, tables, LaueGo XML loading.
 - `src/lauelab/reconstruct` — `Reconstructor` (stripe pipeline over the native
-  kernel), `reconstruct_points` process pool, HDF5 reader/writer conventions,
+  kernel), `reconstruct_points` process pool, `reconstruct_scan` with its
+  single-file writer, `ScanReader`, and validator (layout in
+  `_scan_layout.py`), HDF5 reader/writer conventions,
   and the supported CPU/GPU subprocess wrappers; the executables' C tree is
   `reconstruct/source/`.
 - `tests/` — suite plus golden data; `tests/native/` has the C memory
