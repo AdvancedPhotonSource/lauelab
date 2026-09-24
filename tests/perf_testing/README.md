@@ -28,10 +28,11 @@ $ python tests/perf_testing/run_reconstruct_perf.py
 with a skip message when neither is set or the files are missing. Outputs use
 temporary storage by default; pass `--output-dir` to retain them.
 
-## Reconstruction scan file
+## Reconstruction scan output
 
-`run_scan_storage_perf.py` and `run_scan_host_perf.py` measure the single-file
-output of `reconstruct_scan`. Both build their input with `scan_perf_input.py`:
+`run_scan_storage_perf.py` measures chunk shapes and compression of point-file
+pixel data. `run_scan_host_perf.py` compares worker and thread splits of
+`reconstruct_scan`, which writes one file per point, with per-depth output. Both build their input with `scan_perf_input.py`:
 a synthetic point with detector-scale dimensions (401 stored frames of 2048 by 2048
 `uint16`, 3.1 GiB) reconstructed to 401 depths. Both report measurements without pass/fail thresholds. Pass a work directory on the filesystem you want to measure; each
 needs about 20 GiB there.
@@ -47,6 +48,13 @@ and without gzip. The host script compares sequential points that use every
 thread against point workers that split the threads.
 
 ### Recorded measurements
+
+The measurements below were recorded with the retired single-file layout,
+which kept every point in one file and wrote it from one process. Its pixel
+chunks, stripe conversion, and reductions are unchanged in point files; its
+sequential-versus-concurrent conclusions do not transfer, because point files
+have no shared writer. Point-file runs on the target nodes and GPFS are still
+to be recorded.
 
 Recorded on 2026-09-21 on a 2-socket, 20-core Xeon E5-2680 v2 host with
 125 GiB RAM, on local XFS, with h5py 3.14 and HDF5 1.14. These results informed
@@ -156,7 +164,7 @@ choosing stripe rows and releases completed output arrays promptly. The
 stripe budget does not limit total process RSS; frame-sized references,
 normalization maps, native per-thread scratch and HDF5 buffers are additional.
 No slowdown was observed in these runs. Reproduce the workload with
-`reconstruct_scan([point_path], output_path, geometry=geometry_path, detector=0,
+`reconstruct_point(point_path, output_path, geometry=geometry_path, detector=0,
 depth_range=(-50, 150), num_threads=20, memory_limit_mb=budget)` using the
 measured-data inputs above; use a fresh process for each RSS measurement.
 

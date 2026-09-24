@@ -71,8 +71,9 @@ DATASETS = MappingProxyType({
     "/frames/energies_kev": _spec(F4, units="keV"),
     "/frames/detector_ids": _spec(UTF8),
     "/frames/input_images": _spec(UTF8),
-    # Added within version 1 for frames read from a reconstruction-scan file;
-    # a reader treats their absence as "no scan source" on every frame.
+    # Added within version 1 for frames read from a reconstructed point file,
+    # with its path in input_images. If these datasets are absent, readers
+    # treat every frame as having no scan source.
     "/frames/source_point_ids": _spec(UTF8, optional=True),
     "/frames/source_depth_indices": _spec(I4, optional=True),
     "/frames/titles": _spec(UTF8),

@@ -58,6 +58,17 @@ class RoiOverlay:
             raise ValueError("ROI color must be a non-empty string")
 
 
+def _uid(prefix: str, name: str) -> str:
+    """A Plotly trace uid for a caller-chosen name.
+
+    Plotly turns a uid into a CSS class selector when it removes a trace, so
+    a name with a space or punctuation would break the figure update. The
+    name's UTF-8 bytes in hexadecimal are always a valid class name, and
+    distinct names give distinct uids.
+    """
+    return f"{prefix}-{name.encode('utf-8').hex()}"
+
+
 def _axis_values(trace: DepthTrace, axis: str) -> np.ndarray:
     if axis not in _AXIS_VALUES:
         raise ValueError(f"axis must be one of {_AXIS_VALUES}; received {axis!r}")
@@ -141,7 +152,7 @@ def plot_reference_image(
                 f"size: {size} by {y1 - y0}<extra></extra>"
             ),
             meta={"role": "roi", "name": roi.name},
-            uid=f"roi-{roi.name}",
+            uid=_uid("roi", roi.name),
         ))
         roles["roi"].append(len(figure.data) - 1)
 
@@ -253,9 +264,10 @@ def plot_roi_traces(
 ) -> go.Figure:
     """Render one trace per ROI through depth.
 
-    Semantic trace role is ``"roi"``. Every trace's ``meta["name"]`` and
-    ``uid`` carry its ROI name, so selection and colour follow identity, not
-    position.
+    Semantic trace role is ``"roi"``. Every trace's ``meta["name"]`` carries
+    its ROI name and its ``uid`` is derived from that name. Selection and
+    colour therefore remain associated with the ROI when traces are reordered. Any non-empty name is allowed,
+    including spaces and punctuation.
 
     Parameters
     ----------
@@ -309,7 +321,7 @@ def plot_roi_traces(
                 f"{name}<br>index: %{{x}}<br>I: %{{y:.6g}}<extra></extra>"
             ),
             meta={"role": "roi", "name": name, "point_id": trace.point_id},
-            uid=f"roi-trace-{name}",
+            uid=_uid("roi-trace", name),
         ))
         roles["roi"].append(len(figure.data) - 1)
     if not traces:

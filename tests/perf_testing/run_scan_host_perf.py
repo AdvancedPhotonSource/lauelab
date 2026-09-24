@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 # Copyright © 2026 UChicago Argonne, LLC. All rights reserved.
 # Full license accessible at https://github.com/AdvancedPhotonSource/lauelab/blob/main/LICENSE
-"""Compare whole-node strategies for reconstructing several full-size points.
+"""Compare worker and thread splits for reconstructing several full-size points.
 
-Two strategies are measured end to end, with their output written:
+For each worker count, ``reconstruct_scan`` runs the points in that many
+worker processes, which split ``--threads`` between them, and writes a scan
+directory. ``reconstruct_points`` runs the same split into per-depth files as a
+comparison using independently written per-depth output.
 
-- ``reconstruct_scan``: points one after another, each with every thread,
-  into one reconstruction-scan file.
-- ``reconstruct_points``: a pool of point workers that split the threads and
-  write independent per-depth files. It is the available upper bound for what
-  point-level concurrency can gain, because its workers share no output.
-
-The input is the synthetic full-size point from ``scan_perf_input.py``, used
-once per point. The script has no pass or fail threshold. Host load and the
-page cache affect every number; record the host and filesystem with the table.
+The input is the synthetic full-size point from ``scan_perf_input.py``, linked
+once per point under distinct names. The script has no pass or fail threshold.
+Host load and the page cache affect every number; record the host, the
+filesystem, and whether the threads are physical cores with the table.
 """
 
 from __future__ import annotations
@@ -47,16 +45,18 @@ def main() -> int:
                    depth_range=perf_input.DEPTH_RANGE_UM, resolution=perf_input.RESOLUTION_UM)
 
     print(f"{'strategy':<34s} {'wall s':>8s} {'s/point':>8s}")
-    started = time.perf_counter()
-    result = reconstruct_scan(paths, args.workdir / "host_scan.h5", overwrite=True,
-                              num_threads=args.threads, **options)
-    wall = time.perf_counter() - started
-    assert result.complete
-    print(f"{'scan file, sequential x' + str(args.threads):<34s} {wall:8.1f} {wall / args.points:8.1f}")
-    (args.workdir / "host_scan.h5").unlink()
-
     for workers in args.workers:
         threads = max(1, args.threads // workers)
+        output = args.workdir / "host_scan"
+        started = time.perf_counter()
+        result = reconstruct_scan(paths, output, workers=workers, threads_per_worker=threads,
+                                  **options)
+        wall = time.perf_counter() - started
+        assert result.complete
+        label = f"scan directory, {workers} workers x{threads}"
+        print(f"{label:<34s} {wall:8.1f} {wall / args.points:8.1f}")
+        shutil.rmtree(output)
+
         output = args.workdir / "host_per_depth"
         started = time.perf_counter()
         results = reconstruct_points(paths, output, workers=workers,

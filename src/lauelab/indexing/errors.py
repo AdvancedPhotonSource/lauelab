@@ -54,15 +54,21 @@ class InvalidResultsFile(LaueError, ValueError):
 
 
 class InvalidScanFile(LaueError, ValueError):
-    """A reconstruction-scan HDF5 file is structurally inconsistent or unpublished.
+    """A reconstruction-scan catalog or point file is unsupported or inconsistent.
 
-    Raised by :func:`~lauelab.reconstruct.validate_scan_file` when the format
-    marker or version is wrong, the run is still running or failed, a dataset
-    is missing or has the wrong dtype or shape, catalog rows disagree, a point
-    status is not terminal, point identities repeat, or a point group disagrees
-    with its catalog row. A file that cannot be opened at all raises
-    ``OSError`` instead. A valid file can still hold points that are not
-    complete.
+    Raised by :func:`~lauelab.reconstruct.validate_scan_file` and
+    :class:`~lauelab.reconstruct.ScanReader` when the format marker or version
+    is wrong, including the retired single-file layout; a dataset is missing
+    or has the wrong dtype or shape; catalog rows disagree; a finished or
+    cancelled run lists a pending or writing point; point IDs or point paths are
+    unsafe or repeat; or a catalog row is inconsistent. A valid catalog can
+    still list points that are not complete.
+
+    Raised by :class:`~lauelab.reconstruct.PointReader` and
+    :meth:`~lauelab.reconstruct.ScanReader.point` when a point file is not a
+    complete point file of a supported version or its metadata disagrees
+    with the catalog. A file that cannot be opened at all raises
+    ``OSError`` instead.
     """
 
 

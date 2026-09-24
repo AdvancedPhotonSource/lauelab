@@ -110,7 +110,7 @@ The result records:
 
 `indexing_seconds` measures the orientation-indexing section. It includes the negligible branch when no crystal is supplied or too few peaks are present. Pixel-to-q conversion is not included in either timing field. `elapsed_seconds` therefore does not measure complete call latency.
 
-`metadata` contains supplied values and recognized HDF5 provenance. `input_image` is the HDF5 path for file input and `None` for an in-memory array. For a reconstructed scan frame, `source` contains the {class}`~lauelab.indexing.ScanFrame` reference and `input_image` contains the scan file path. `image_shape`, `start`, `group`, and `depth` record the frame geometry used by the call.
+`metadata` contains supplied values and recognized HDF5 provenance. `input_image` is the HDF5 path for file input and `None` for an in-memory array. For a reconstructed scan frame, `source` contains the {class}`~lauelab.indexing.ScanFrame` reference and `input_image` contains the point file path. `image_shape`, `start`, `group`, and `depth` record the frame geometry used by the call.
 
 ## Retained images
 

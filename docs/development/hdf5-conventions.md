@@ -1,6 +1,6 @@
 # HDF5 file conventions
 
-These conventions apply to HDF5 files whose layout `lauelab` defines. The indexing results file and the [reconstruction scan file](reconstruction-scan-format.md) share these conventions. Detector frames and per-depth reconstruction outputs follow the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
+Indexing results and [reconstruction catalogs and point files](reconstruction-scan-format.md) follow these HDF5 conventions. Point files also use NeXus base classes for their image stack, reference images, and processing metadata. Detector frames and per-depth reconstruction outputs follow the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
 
 ## Root attributes
 

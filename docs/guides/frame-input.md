@@ -47,15 +47,15 @@ For a reconstructed frame, obtain the physical depth from the file or the recons
 
 ## Scan frames
 
-A {class}`~lauelab.indexing.ScanFrame` selects one stored frame of a file written by {func}`~lauelab.reconstruct.reconstruct_scan` by point ID and zero-based depth index:
+To index a reconstructed depth image, pass a {class}`~lauelab.indexing.ScanFrame` with the point file path, point ID, and zero-based depth index. You can use a file from the `points/` directory written by {func}`~lauelab.reconstruct.reconstruct_scan` or a standalone output from {func}`~lauelab.reconstruct.reconstruct_point`:
 
 ```python
 from lauelab.indexing import ScanFrame
 
-result = indexer.index(ScanFrame("run/scan.h5", "scan12_p1", 30))
+result = indexer.index(ScanFrame("run/points/point_1.h5", "scan12_p1", 30))
 ```
 
-Indexing reads the selected frame in its stored dtype, including signed types. Point metadata supplies `start`, `group`, the detector identifier, and physical depth; an explicit `depth` argument overrides the stored depth. The catalog supplies the scan number, sample position, and incident energy. `ScanFrame` is serializable and can be passed to indexing workers, which open the file locally. `FrameResult.source` returns the reference, and `FrameResult.input_image` is the scan file's path. See [Reconstruct a wire scan](reconstruction.md) for the file itself.
+Indexing reads the selected frame in its stored dtype, including signed types, and needs no catalog. The point file supplies `start`, `group`, the detector identifier, physical depth, scan number, sample position, and incident energy; an explicit `depth` argument overrides the stored depth. Indexing checks that the point ID in the file matches the reference. `ScanFrame` is serializable and can be passed to indexing workers, which open the file locally. `FrameResult.source` returns the reference, and `FrameResult.input_image` is the point file's path. See [Reconstruct a wire scan](reconstruction.md) to resolve a catalog point ID to its file.
 
 ## Region and grouping
 

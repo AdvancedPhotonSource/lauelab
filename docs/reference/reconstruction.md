@@ -4,7 +4,11 @@
 
 See [Reconstruct a wire scan](../guides/reconstruction.md) for usage and [Depth reconstruction](../concepts/algorithms/depth-reconstruction.md) for the calculation.
 
-{func}`~lauelab.reconstruct.reconstruct_scan` reconstructs many points into one HDF5 file, whose layout and value semantics are defined in [Reconstruction scan format](../development/reconstruction-scan-format.md). It returns a {class}`~lauelab.reconstruct.ScanResult`. A {class}`~lauelab.indexing.ScanFrame`, also importable from this module, identifies a stored frame for indexing, and {func}`~lauelab.reconstruct.export_per_depth` writes a point back out as per-depth files.
+Use {func}`~lauelab.reconstruct.reconstruct_scan` to reconstruct points in local worker processes. It writes one HDF5 file per point and a shared `scan.h5` catalog, then returns a {class}`~lauelab.reconstruct.ScanResult`.
+
+For an external scheduler, call {func}`~lauelab.reconstruct.prepare_scan` to get a {class}`~lauelab.reconstruct.PreparedScan` coordinator and serializable {class}`~lauelab.reconstruct.PointTask` objects. Workers execute tasks with {func}`~lauelab.reconstruct.reconstruct_point` and return a {class}`~lauelab.reconstruct.PointOutcome`. You can also call `reconstruct_point` directly to write a standalone point.
+
+To index a depth image, select it with {class}`~lauelab.indexing.ScanFrame`, also importable from this module. To produce per-depth files for other tools, use {func}`~lauelab.reconstruct.export_per_depth`. [Reconstruction scan format](../development/reconstruction-scan-format.md) specifies the layouts, statuses, and pixel values.
 
 Every other path returns a {class}`~lauelab.reconstruct.ReconstructionResult`. Runtime failures are recorded in that result. Invalid arguments and setup failures that occur before processing raise exceptions. The native path does not support the executable's `-F` parameter-file option or distortion maps.
 
@@ -34,6 +38,15 @@ A wire axis exactly parallel to the positioner x axis, with a zero wire rotation
 ``ReconstructionResult`` is a dataclass with the same six leading fields as the former named tuple. Attribute access and positional construction are unchanged; tuple unpacking is not supported.
 
 .. autofunction:: reconstruct_points
+
+.. autofunction:: prepare_scan
+
+.. autoclass:: PreparedScan
+   :members: record_dispatch, record, snapshot, finish, close
+
+.. autoclass:: PointTask
+
+.. autofunction:: reconstruct_point
 
 .. autofunction:: reconstruct_scan
 

@@ -3,9 +3,11 @@
 """Depth inspection: ROI placement, traces, normalization, and the Plotly builders.
 
 The numerical tests run the L1 contract fixtures through ``ArrayPoint`` and
-need no native library; the scan-file tests check the same functions on a
-point of a reconstruction-scan file.
+need no native library. The file-based tests check the same functions on
+reconstructed point files.
 """
+
+import re
 
 import numpy as np
 import pytest
@@ -160,7 +162,7 @@ def test_reference_image_figure_draws_squares_on_pixel_edges(point):
     assert (figure.data[0].zmin, figure.data[0].zmax) == (0.0, 10.0)
     assert list(figure.data[1].x) == [-0.5, 0.5, 0.5, -0.5, -0.5]
     assert list(figure.data[1].y) == [-0.5, -0.5, 0.5, 0.5, -0.5]
-    assert figure.data[2].uid == "roi-b" and figure.data[2].line.color == "blue"
+    assert figure.data[2].uid == "roi-62" and figure.data[2].line.color == "blue"  # b.hex()
     assert "centre: (2.5, 1.5)" in figure.data[2].hovertemplate
     assert list(figure.layout.xaxis.range) == [-0.5, 3.5]
     assert list(figure.layout.yaxis.range) == [2.5, -0.5]
@@ -173,6 +175,19 @@ def test_reference_image_figure_draws_squares_on_pixel_edges(point):
         plot_reference_image(image.image)
     with pytest.raises(ValueError, match="limits"):
         plot_reference_image(image, limits=(1.0, 1.0))
+
+
+def test_roi_uids_are_valid_css_class_names_for_any_roi_name(point):
+    """Plotly selects removed traces by ``.cb<uid>``; a space in a uid breaks the update."""
+    names = ["ROI 1", "ROI 11", "a.b#c", "µ spot", "ROI 1 "]
+    figure = plot_reference_image(
+        reference_image(point), [RoiOverlay(name, (0, 1, 0, 1), "red") for name in names]
+    )
+    traces = plot_roi_traces(roi_traces(point, {name: (0, 1, 0, 1) for name in names}))
+    for uids in ([trace.uid for trace in figure.data[1:]], [trace.uid for trace in traces.data]):
+        assert all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", uid) for uid in uids)
+        assert len(set(uids)) == len(names)
+    assert [trace.meta["name"] for trace in traces.data] == names
 
 
 def test_depth_trace_figure_supports_both_axes_log_and_selection(point):
@@ -204,7 +219,7 @@ def test_roi_traces_figure_keeps_identity_and_reports_unavailable_normalization(
     figure = plot_roi_traces(traces, colors={"dark": "black"})
     assert _roles(figure) == ["roi", "roi", "roi"]
     assert [trace.meta["name"] for trace in figure.data] == ["spot", "dark", "square"]
-    assert figure.data[1].line.color == "black" and figure.data[1].uid == "roi-trace-dark"
+    assert figure.data[1].line.color == "black" and figure.data[1].uid == "roi-trace-" + b"dark".hex()
     assert figure.layout.yaxis.title.text == "Stored intensity"
     assert not figure.layout.annotations
 
@@ -238,7 +253,7 @@ def test_options_are_discoverable():
 
 @pytest.fixture(scope="module")
 def scan_point(tmp_path_factory):
-    """The synthetic scan reconstructed into a scan file, as the guide uses it."""
+    """The synthetic scan reconstructed into a scan directory, as the guide uses it."""
     from conftest import LIBLAUE_AVAILABLE
     from lauelab.reconstruct import reconstruct_scan
     from tests.data.reconstruction.generate_reference import (
@@ -251,9 +266,9 @@ def scan_point(tmp_path_factory):
     source = work / "synthetic.h5"
     write_input_file(source)
     result = reconstruct_scan(
-        [source], work / "scan.h5", geometry=GEOMETRY_FILE, detector=0,
+        [source], work / "run", geometry=GEOMETRY_FILE, detector=0,
         point_ids=["scan12_p1"], depth_range=DEPTH_RANGE_UM, wire_edge="both",
-        num_threads=1, rows_per_stripe=31,
+        threads_per_worker=1, rows_per_stripe=31,
     )
     assert result.complete
     return result.path

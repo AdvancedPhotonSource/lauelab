@@ -14,19 +14,23 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ScanFrame:
-    """One stored frame of a reconstruction-scan file.
+    """Reference to a reconstructed depth image for indexing.
 
-    Identifies a frame by scan file path, point ID, and depth index. The
-    reference can be pickled, passed to a worker process, and saved with
-    indexing results. File handles are opened locally when reading the frame.
+    Supply the point file path, point ID, and depth index to select a stored
+    frame. The reference can be pickled, sent to a worker, and saved with
+    indexing results. Each process opens the point file when it reads the
+    frame; a scan catalog is unnecessary.
 
     Parameters
     ----------
     path : pathlib.Path or str
-        The reconstruction-scan file written by
-        :func:`~lauelab.reconstruct.reconstruct_scan`.
+        A point file, such as ``points/<input stem>.h5`` of a scan directory
+        written by :func:`~lauelab.reconstruct.reconstruct_scan`, or a
+        standalone file written by :func:`~lauelab.reconstruct.reconstruct_point`.
+        :meth:`ScanReader.point_path <lauelab.reconstruct.ScanReader.point_path>`
+        resolves a catalog point ID to this path.
     point_id : str
-        Point ID within that run.
+        Expected point ID. Reading fails if the ID in the file differs.
     depth_index : int
         Zero-based position of the frame in the point's depth stack. Its
         physical depth in µm is read from the file.
@@ -53,18 +57,18 @@ def read_scan_frame(frame: ScanFrame):
     Returns the same ``(image, metadata, processing)`` triple as
     :func:`read_h5_frame`. Only the selected frame is read from the file.
     """
-    from lauelab.reconstruct import ScanReader
+    from lauelab.reconstruct import PointReader
 
-    with ScanReader(frame.path) as scan:
-        point = scan.point(frame.point_id)
+    with PointReader(frame.path) as point:
+        if point.point_id != frame.point_id:
+            raise ValueError(f"{frame.path} holds point {point.point_id!r}, not {frame.point_id!r}")
         image = point.frame(frame.depth_index)
-        entry = point.entry
         metadata = {
-            "scan_number": entry.scan_number,
-            "energy_kev": entry.energy_kev,
+            "scan_number": point.scan_number,
+            "energy_kev": point.energy_kev,
             "detector_id": point.detector_id or None,
             "sample_position": (
-                entry.sample_position if np.isfinite(entry.sample_position).all() else None
+                point.sample_position if np.isfinite(point.sample_position).all() else None
             ),
         }
         metadata = {name: value for name, value in metadata.items() if value is not None}

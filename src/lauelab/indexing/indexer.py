@@ -336,7 +336,7 @@ class FrameResult:
         Experiment metadata copied into the result.
     input_image
         Source HDF5 path, or `None` for an in-memory frame. For a
-        :class:`ScanFrame` this is the scan file's path; ``source`` holds the
+        :class:`ScanFrame` this is the point file's path; ``source`` holds the
         point and depth.
     source
         The :class:`ScanFrame` that selected the frame, or `None` for an
@@ -717,8 +717,8 @@ class Indexer:
             Two-dimensional NumPy array with a dtype in
             :data:`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES`, path to a
             supported HDF5 frame whose image has one of those dtypes, or a
-            :class:`ScanFrame` naming one stored frame of a reconstruction-scan
-            file. Pixel values enter peak search as their exact double value;
+            :class:`ScanFrame` naming one stored frame of a reconstructed
+            point file. Pixel values enter peak search as their exact double value;
             no other dtype is converted.
         start
             Zero-based detector ``(x, y)`` origin for an in-memory frame.

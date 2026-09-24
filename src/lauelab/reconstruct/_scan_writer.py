@@ -1,17 +1,21 @@
 # Copyright © 2026 UChicago Argonne, LLC. All rights reserved.
 # Full license accessible at https://github.com/AdvancedPhotonSource/lauelab/blob/main/LICENSE
-"""Writer for reconstruction-scan HDF5 files.
+"""Writers for reconstruction scans: catalog snapshots and point files.
 
-One :class:`ScanWriter` owns the file for a whole run. It creates every group
-and dataset from the frozen manifest before any point is computed, hands one
-stripe sink to the reconstructor for each point, and publishes the closed,
-validated file. No other object writes to the file.
+The scan coordinator is the only writer of ``scan.h5``. It keeps the catalog in
+memory and periodically publishes pending changes as a complete snapshot: it is
+written to a private file, closed, validated, and moved over ``scan.h5``. A
+reader that already holds the file keeps its earlier snapshot.
+
+Each worker writes its own point file. Before computation, it creates all
+datasets in a private file, then fills them stripe by stripe through
+:class:`PointSink`, and sets ``/entry1/reconstruction/point/complete`` last.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import Mapping
 
 import h5py
 import numpy as np
@@ -19,11 +23,10 @@ import numpy as np
 from lauelab._hdf5 import set_units, write_root_attributes
 from lauelab._native import ffi, get_library
 from lauelab._publish import partial_path, publish_file
-from lauelab.indexing.errors import InputError
 
 from . import _scan_layout as layout
-from ._scan_layout import PointStatus, RunStatus
-from ._writer import PIXEL_DTYPES, _copy_metadata, pixel_type
+from ._scan_layout import RunStatus
+from ._writer import PIXEL_DTYPES, _copy_metadata
 
 _F8 = np.dtype("<f8")
 
@@ -34,8 +37,6 @@ _F8 = np.dtype("<f8")
 # whole chunks. It is not part of the format contract.
 DATA_CHUNKS = (4, 128, 128)
 COMPRESSION = {None: {}, "gzip": {"compression": "gzip", "compression_opts": 1, "shuffle": True}}
-
-_FILL = {"nan": np.nan, "": "", -1: -1}
 
 
 def _stored_type_code(dtype) -> int:
@@ -73,10 +74,11 @@ def store_stripe(values: np.ndarray, dtype, rescale: float = 1.0, n_threads: int
 
     Notes
     -----
-    A stored value equals what an HDF5 dataset of ``dtype`` stores for
-    ``values * rescale``: the rounded value for a floating-point type, and for
-    an integer type the value truncated toward zero and saturated at the
-    limits of the type. NaN stores 0 in an integer type.
+    Values are multiplied by ``rescale`` before conversion. Floating-point
+    output matches a NumPy cast; integer output truncates toward zero and
+    saturates at the dtype limits. NaN becomes 0 in integer output. Finite
+    values and infinities match HDF5 conversion; integer NaN conversion can
+    differ from HDF5.
     """
     values = np.ascontiguousarray(values, dtype=_F8)
     if values.ndim != 3:
@@ -95,12 +97,6 @@ def store_stripe(values: np.ndarray, dtype, rescale: float = 1.0, n_threads: int
     return stored, depth_sums, pixel_sums
 
 
-def _error_text(message: str) -> bytes:
-    """Encode ``message`` for the fixed-width error dataset without splitting a character."""
-    width = layout.MUTABLE_TEXT.itemsize
-    return str(message).encode("utf-8")[:width].decode("utf-8", errors="ignore").encode("utf-8")
-
-
 def _create(group, path, spec, *, shape=None, dtype=None, data=None, **options):
     dataset = group.create_dataset(
         path.lstrip("/"), shape=shape, dtype=spec.dtype if dtype is None else dtype,
@@ -112,225 +108,185 @@ def _create(group, path, spec, *, shape=None, dtype=None, data=None, **options):
     return dataset
 
 
-class ScanWriter:
-    """Single owner of one reconstruction-scan file.
+def settings_values(detector: int, settings: Mapping, geometry_path: str,
+                    geometry_xml: str) -> dict:
+    """Return the ``SETTINGS_DATASETS`` values for one scan or point.
+
+    ``settings`` holds the :class:`~lauelab.reconstruct.Reconstructor` keyword
+    arguments of a prepared task.
+    """
+    return {
+        "/settings/detector": detector,
+        "/settings/depth_range": settings["depth_range"],
+        "/settings/resolution": settings["resolution"],
+        "/settings/wire_edge": settings["wire_edge"],
+        "/settings/percent_brightest": settings["percent_brightest"],
+        "/settings/normalization": settings["normalization"] or "",
+        "/settings/norm_exponent": _missing(settings["norm_exponent"], np.nan),
+        "/settings/norm_threshold": _missing(settings["norm_threshold"], np.nan),
+        "/settings/cosmic_filter": int(settings["cosmic_filter"]),
+        "/settings/output_pixel_type": _missing(settings["output_pixel_type"], -1),
+        "/settings/rows_per_stripe": _missing(settings["rows_per_stripe"], -1),
+        "/settings/memory_limit_mb": settings["memory_limit_mb"],
+        "/geometry/path": geometry_path,
+        "/geometry/xml": geometry_xml,
+    }
+
+
+def native_version() -> str:
+    """Return the version string of the loaded native library."""
+    return ffi.string(get_library().laue_version()).decode()
+
+
+def write_catalog(path: Path, *, created: str, run_status: RunStatus,
+                  run_values: Mapping, catalog: Mapping, replace: bool) -> None:
+    """Publish one complete catalog snapshot at ``path``.
 
     Parameters
     ----------
     path
-        Final path of the file. The writer works on ``<path>.partial`` and
-        renames it into place in :meth:`close`.
-    reconstructor
-        The configured :class:`~lauelab.reconstruct.Reconstructor`; its options
-        are the run settings.
-    n_points
-        Manifest length.
-    overwrite
-        Replace an existing ``path``. The default raises ``FileExistsError``
-        before any work is done.
-    compression
-        ``None`` or ``"gzip"`` for the pixel datasets.
+        ``scan.h5`` of the scan directory.
+    created
+        Creation time of the scan, kept by every snapshot.
+    run_status
+        Run status of this snapshot.
+    run_values
+        Values of ``SETTINGS_DATASETS`` and ``/run/native_version``.
+    catalog
+        Values of every ``CATALOG_DATASETS`` entry, one row per point.
+    replace
+        ``False`` for the first snapshot, which refuses to replace an existing
+        file; ``True`` for later snapshots.
+
+    Raises
+    ------
+    OSError
+        If the snapshot cannot be written or moved into place. The previous
+        snapshot, if any, is unchanged.
+    InvalidScanFile
+        If the snapshot does not validate; it is left at its ``.partial``
+        name.
     """
+    from ._scan_reader import validate_scan_file
 
-    def __init__(self, path, *, reconstructor, n_points: int, overwrite: bool = False,
-                 compression: str | None = None) -> None:
-        if compression not in COMPRESSION:
-            raise InputError(f"compression must be None or 'gzip'; received {compression!r}")
-        self.path = Path(path)
-        if self.path.exists() and not overwrite:
-            raise FileExistsError(f"{self.path} exists; pass overwrite=True to replace it")
-        self._overwrite = overwrite
-        self._partial = partial_path(self.path)
-        self._storage = COMPRESSION[compression]
-        self._n_points = int(n_points)
-        self._ids: list[str] = []
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = h5py.File(self._partial, "w")
-        try:
-            self._write_run(reconstructor)
-        except BaseException:
-            self._file.close()
-            raise
+    partial = partial_path(path)
+    with h5py.File(partial, "w") as target:
+        write_root_attributes(target, format_name=layout.SCAN_FORMAT,
+                              version=layout.SCAN_VERSION, created=created)
+        values = {**run_values, "/run/status": int(run_status)}
+        for name, spec in {**layout.SCAN_RUN_DATASETS, **layout.SETTINGS_DATASETS}.items():
+            _create(target, name, spec, data=np.asarray(values[name], dtype=spec.dtype))
+        for name, spec in layout.CATALOG_DATASETS.items():
+            _create(target, name, spec, data=np.asarray(catalog[name], dtype=spec.dtype))
+    validate_scan_file(partial)
+    publish_file(partial, path, overwrite=replace)
 
-    # -- file creation ---------------------------------------------------------
 
-    def _write_run(self, reconstructor) -> None:
-        from lauelab._native import ffi, get_library
+def write_point_metadata(file: h5py.File, task, *, info, depth_um, output_type: int, first_raw,
+                         source_metadata, source_stat, num_threads: int) -> None:
+    """Create every dataset of one point in its open private file.
 
-        target = self._file
-        write_root_attributes(target, format_name=layout.FORMAT, version=layout.VERSION)
-        geometry_path = reconstructor.geometry_path
-        values = {
-            "/run/status": int(RunStatus.RUNNING),
-            "/run/native_version": ffi.string(get_library().laue_version()).decode(),
-            "/settings/detector": reconstructor.detector,
-            "/settings/depth_range": reconstructor.depth_range,
-            "/settings/resolution": reconstructor.resolution,
-            "/settings/wire_edge": reconstructor.wire_edge,
-            "/settings/percent_brightest": reconstructor.percent_brightest,
-            "/settings/normalization": reconstructor.normalization or "",
-            "/settings/norm_exponent": _missing(reconstructor.norm_exponent, np.nan),
-            "/settings/norm_threshold": _missing(reconstructor.norm_threshold, np.nan),
-            "/settings/cosmic_filter": int(reconstructor.cosmic_filter),
-            "/settings/output_pixel_type": _missing(reconstructor.output_pixel_type, -1),
-            "/settings/memory_limit_mb": reconstructor.memory_limit_mb,
-            "/geometry/path": "" if geometry_path is None else os.fspath(geometry_path),
-            "/geometry/xml": "" if geometry_path is None else Path(geometry_path).read_text(),
-        }
-        for path, spec in layout.RUN_DATASETS.items():
-            _create(target, path, spec, data=np.asarray(values[path], dtype=spec.dtype))
-        for path, spec in layout.CATALOG_DATASETS.items():
-            shape = (self._n_points,) + tuple(spec.shape[1:])
-            dataset = _create(target, path, spec, shape=shape)
-            fill = spec.attrs.get("missing")
-            if fill is not None and h5py.check_string_dtype(spec.dtype) is None:
-                dataset[...] = _FILL[fill]
-        target.create_group("points")
-        target.flush()
-
-    def add_point(self, index: int, point_id: str, source_path, *, source=None, info=None,
-                  stored_dtype=None, depth_um=None, error: str | None = None) -> None:
-        """Write the catalog row of one point and, unless it failed, its group.
-
-        Call once for each manifest index in order, before any point is
-        computed. ``error`` records a point whose input could not be read; it
-        gets a ``failed`` row and no group.
-        """
-        if index != len(self._ids):
-            raise ValueError("points must be added in manifest order")
-        if not isinstance(point_id, str) or not point_id or point_id in self._ids:
-            raise ValueError(f"point ID {point_id!r} must be a unique, non-empty string")
-        self._ids.append(point_id)
-        catalog = self._file["catalog"]
-        catalog["point_ids"][index] = point_id
-        catalog["source_paths"][index] = os.fspath(source_path)
-        try:
-            status = os.stat(source_path)
-            catalog["source_sizes"][index] = status.st_size
-            catalog["source_mtimes_ns"][index] = status.st_mtime_ns
-        except OSError:
-            pass
-        if error is not None:
-            catalog["image_shapes"][index] = (0, 0)
-            catalog["n_depths"][index] = 0
-            catalog["status"][index] = int(PointStatus.FAILED)
-            catalog["errors"][index] = _error_text(error)
-            return
-
-        n_images, rows, columns = info.shape
-        stored = np.dtype(stored_dtype)
-        depth_um = np.asarray(depth_um, dtype=_F8)
-        if info.scan_number is not None:
-            catalog["scan_numbers"][index] = info.scan_number
-        catalog["sample_positions"][index] = info.sample_position
-        if info.energy_kev is not None:
-            catalog["energies_kev"][index] = info.energy_kev
-        catalog["image_shapes"][index] = (rows, columns)
-        catalog["n_depths"][index] = len(depth_um)
-        catalog["depth_bounds"][index] = (depth_um[0], depth_um[-1])
-        catalog["pixel_types"][index] = pixel_type(stored)
-
-        group = self._file.create_group(layout.POINT_GROUP.format(index=index))
-        geometry = info.image_geometry
-        dims = {"n_depths": len(depth_um), "rows": rows, "columns": columns}
-        values = {
-            "depth_um": depth_um,
-            "detector/id": _detector_id(source),
-            "detector/size": (geometry.nx_full, geometry.ny_full),
-            "detector/roi_start": geometry.start,
-            "detector/roi_group": geometry.group,
-            "normalization/threshold": np.nan,
-            "normalization/rescale": 1.0,
-            "reference/raw_slices": (1, n_images + 1),
-        }
-        for path, spec in layout.POINT_DATASETS.items():
-            dtype = layout.resolve_dtype(spec, stored=stored, input=info.dtype)
-            shape = tuple(dims[name] if isinstance(name, str) else name for name in spec.shape)
-            if path == "data":
-                _create(
-                    group, path, spec, shape=shape, dtype=dtype,
+    Parameters
+    ----------
+    file
+        The private point file, newly created.
+    task
+        The :class:`~lauelab.reconstruct.PointTask` of the point.
+    info
+        ``ScanInfo`` of the input.
+    depth_um
+        Physical depths of the point in µm.
+    output_type
+        Stored pixel-type code.
+    first_raw
+        First selected raw frame, already read from the input.
+    source_metadata
+        Input metadata to preserve at its original paths.
+    source_stat
+        ``os.stat_result`` of the input, or ``None``.
+    num_threads
+        OpenMP threads of the reconstruction.
+    """
+    _copy_metadata(source_metadata, file, exclude_entry=("depth",), exclude_data=("depth",))
+    # Acquisition axes describe the raw frames, not the reconstructed stack.
+    for name in list(file["entry1/data"].attrs):
+        if name in ("signal", "axes", "default", "auxiliary_signals") or name.endswith("_indices"):
+            del file["entry1/data"].attrs[name]
+    write_root_attributes(file, format_name=layout.POINT_FORMAT, version=layout.POINT_VERSION)
+    for path, attributes in layout.POINT_GROUP_ATTRIBUTES.items():
+        file.require_group(path).attrs.update(attributes)
+    n_images, rows, columns = info.shape
+    stored = PIXEL_DTYPES[output_type]
+    geometry = info.image_geometry
+    values = {
+        **{"/entry1/reconstruction" + path: value for path, value in
+           settings_values(task.detector, task.settings, task.geometry_path, task.geometry_xml).items()},
+        "/entry1/reconstruction/program": "lauelab",
+        "/entry1/reconstruction/version": file.attrs["lauelab_version"],
+        "/entry1/reconstruction/date": file.attrs["created"],
+        "/entry1/reconstruction/point/id": task.point_id,
+        "/entry1/reconstruction/point/manifest_index": _missing(task.index, -1),
+        "/entry1/reconstruction/point/complete": 0,
+        "/entry1/reconstruction/point/native_version": native_version(),
+        "/entry1/reconstruction/execution/num_threads": num_threads,
+        "/entry1/reconstruction/execution/rows_per_stripe": 0,
+        "/entry1/reconstruction/acquisition/source_path": task.source,
+        "/entry1/reconstruction/acquisition/source_size": -1 if source_stat is None else source_stat.st_size,
+        "/entry1/reconstruction/acquisition/source_mtime_ns": -1 if source_stat is None else source_stat.st_mtime_ns,
+        "/entry1/reconstruction/acquisition/scan_number": _missing(info.scan_number, -1),
+        "/entry1/reconstruction/acquisition/sample_position": info.sample_position,
+        "/entry1/reconstruction/acquisition/energy_kev": _missing(info.energy_kev, np.nan),
+        "/entry1/depth": depth_um,
+        "/entry1/reconstruction/detector/id": _detector_id(source_metadata),
+        "/entry1/reconstruction/detector/size": (geometry.nx_full, geometry.ny_full),
+        "/entry1/reconstruction/detector/roi_start": geometry.start,
+        "/entry1/reconstruction/detector/roi_group": geometry.group,
+        "/entry1/reconstruction/normalization/threshold": np.nan,
+        "/entry1/reconstruction/normalization/rescale": 1.0,
+        "/entry1/reconstruction/first_raw/data": first_raw,
+        "/entry1/reconstruction/acquisition/raw_slices": (1, n_images + 1),
+    }
+    dims = {"n_depths": len(depth_um), "rows": rows, "columns": columns}
+    for path, spec in {**layout.POINT_SETTINGS_DATASETS, **layout.POINT_DATASETS}.items():
+        dtype = layout.resolve_dtype(spec, stored=stored, input=info.dtype)
+        shape = tuple(dims[name] if isinstance(name, str) else name for name in spec.shape)
+        if path == "/entry1/data/data":
+            _create(file, path, spec, shape=shape, dtype=dtype,
                     chunks=tuple(min(chunk, size) for chunk, size in zip(DATA_CHUNKS, shape)),
-                    **self._storage,
-                )
-            elif path in values:
-                _create(group, path, spec, dtype=dtype, data=np.asarray(values[path], dtype=dtype))
-            else:
-                _create(group, path, spec, shape=shape, dtype=dtype)
-        _copy_metadata(source, group.create_group(layout.POINT_SOURCE_GROUP))
-
-    # -- points ----------------------------------------------------------------
-
-    def sink(self, index: int, source, n_threads: int = 1) -> "_ScanSink":
-        """Return the stripe sink for the point at ``index``."""
-        return _ScanSink(self, index, source, n_threads)
-
-    def fail_point(self, index: int, error: str) -> None:
-        """Record an expected failure of one point."""
-        self._file["catalog/errors"][index] = _error_text(error)
-        self._set_status(index, PointStatus.FAILED)
-
-    def _set_status(self, index: int, status: PointStatus) -> None:
-        self._file["catalog/status"][index] = int(status)
-        self._file.flush()
-
-    # -- end of run ------------------------------------------------------------
-
-    def close(self, *, cancelled: bool = False) -> Path:
-        """Finish the run, close and validate the file, and publish it.
-
-        Points that never started become ``unattempted`` and a point left in
-        ``writing`` becomes ``interrupted``.
-        """
-        from ._scan_reader import validate_scan_file
-
-        status = self._file["catalog/status"]
-        codes = status[...]
-        codes[codes == PointStatus.PENDING] = PointStatus.UNATTEMPTED
-        codes[codes == PointStatus.WRITING] = PointStatus.INTERRUPTED
-        status[...] = codes
-        self._file["run/status"][()] = int(RunStatus.CANCELLED if cancelled else RunStatus.FINISHED)
-        self._file.close()
-        validate_scan_file(self._partial)
-        return publish_file(self._partial, self.path, overwrite=self._overwrite)
-
-    def abort(self) -> None:
-        """Close after a shared failure. The file keeps its ``.partial`` name."""
-        try:
-            self._file["run/status"][()] = int(RunStatus.FAILED)
-        except Exception:
-            pass
-        try:
-            self._file.close()
-        except Exception:
-            pass
+                    **COMPRESSION[task.compression])
+        elif path in values:
+            _create(file, path, spec, dtype=dtype, data=np.asarray(values[path], dtype=dtype))
+        else:
+            _create(file, path, spec, shape=shape, dtype=dtype)
+    for path in layout.POINT_DEPTH_LINKS:
+        file[path] = file["entry1/depth"]
 
 
-class _ScanSink:
-    """Stripe sink that writes one point into the run file.
+class PointSink:
+    """Stripe sink that writes one point into its private file.
 
-    ``error`` holds the exception of a failed file operation. The reconstructor
-    reports any failure after its first stripe as a failed point; the run
-    reads ``error`` to tell a failure of the shared file from a failure of the
-    point's input.
+    The reconstructor reports failures after the first stripe as failed point
+    results. The sink retains its first output exception in ``error`` so the
+    caller can detect output failures and stop the run. Input and computation
+    failures affect only the current point. Stripes arrive already loaded;
+    the sink performs no input reads.
     """
 
     output_files: list = []
 
-    def __init__(self, writer: ScanWriter, index: int, source, n_threads: int) -> None:
-        self._writer = writer
-        self._index = index
-        self._source = source
+    def __init__(self, file: h5py.File, n_threads: int) -> None:
+        self._file = file
+        self._data = file["entry1/data/data"]
         self._n_threads = n_threads
         self._rescale = 1.0
-        self._group = writer._file[layout.POINT_GROUP.format(index=index)]
-        self._data = self._group["data"]
         self.error: Exception | None = None
 
     def _guard(self, operation, *args, **kwargs):
         try:
             return operation(*args, **kwargs)
         except Exception as error:
-            self.error = error
+            if self.error is None:
+                self.error = error
             raise
 
     def stripe_buffer_bytes(self, n_depths, cols) -> tuple[int, int]:
@@ -338,33 +294,19 @@ class _ScanSink:
         # stripe reduction has the same per-pixel cost and runs separately.
         return n_depths * 8, cols * (n_depths * self._data.dtype.itemsize + 8)
 
-    def begin(self, *, depth_um, shape, output_type, threshold, rescale) -> None:
-        # A mismatch means the input changed after the manifest was frozen. It
-        # is a failure of this point, not of the file.
-        if (
-            self._data.dtype != PIXEL_DTYPES[output_type]
-            or self._data.shape != (len(depth_um), *shape)
-            or not np.array_equal(self._group["depth_um"][...], depth_um)
-        ):
-            raise InputError(
-                f"point {self._index} changed after the run prepared its output"
-            )
-        self._guard(self._begin, depth_um=depth_um, shape=shape, output_type=output_type,
-                    threshold=threshold, rescale=rescale)
+    def begin(self, **kwargs) -> None:
+        self._guard(self._begin, **kwargs)
 
     def _begin(self, *, depth_um, shape, output_type, threshold, rescale) -> None:
-        group = self._group
-        stored = PIXEL_DTYPES[output_type]
-        raw = self._source["entry1/data/data"]
-        accumulator = layout.accumulator_dtype(stored)
+        if self._data.shape != (len(depth_um), *shape) or self._data.dtype != PIXEL_DTYPES[output_type]:
+            raise ValueError("the point file does not match the reconstruction")
+        accumulator = layout.accumulator_dtype(self._data.dtype)
         self._depth_intensity = np.zeros(len(depth_um), dtype=accumulator)
         self._sum_reconstructed = np.zeros(shape, dtype=accumulator)
-        self._sum_raw = np.zeros(shape, dtype=group["reference/sum_raw"].dtype)
+        self._sum_raw = np.zeros(shape, dtype=self._file["entry1/reconstruction/sum_raw/data"].dtype)
         self._rescale = rescale
-        self._writer._set_status(self._index, PointStatus.WRITING)
-        group["normalization/threshold"][()] = np.nan if threshold is None else threshold
-        group["normalization/rescale"][()] = rescale
-        group["reference/first_raw"][...] = raw[1]
+        self._file["entry1/reconstruction/normalization/threshold"][()] = np.nan if threshold is None else threshold
+        self._file["entry1/reconstruction/normalization/rescale"][()] = rescale
 
     def raw(self, row0, stripe) -> None:
         # A float64 sum of integers of at most 4 bytes is exact below 2**53.
@@ -388,13 +330,14 @@ class _ScanSink:
     def finish(self, **kwargs) -> None:
         self._guard(self._finish, **kwargs)
 
-    def _finish(self, *, totals, **_) -> None:
-        group = self._group
-        group["reference/sum_raw"][...] = self._sum_raw
-        group["reference/sum_reconstructed"][...] = self._sum_reconstructed
-        group["reductions/depth_intensity"][...] = self._depth_intensity
-        group["computed/depth_intensity"][...] = totals
-        self._writer._set_status(self._index, PointStatus.COMPLETE)
+    def _finish(self, *, totals, stripe_rows, **_) -> None:
+        file = self._file
+        file["entry1/reconstruction/sum_raw/data"][...] = self._sum_raw
+        file["entry1/reconstruction/sum_reconstructed/data"][...] = self._sum_reconstructed
+        file["entry1/reconstruction/stored_depth_intensity/data"][...] = self._depth_intensity
+        file["entry1/reconstruction/computed_depth_intensity/data"][...] = totals
+        file["entry1/reconstruction/execution/rows_per_stripe"][()] = stripe_rows
+        file["entry1/reconstruction/point/complete"][()] = 1
 
     def close(self) -> None:
         pass

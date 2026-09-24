@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # Copyright © 2026 UChicago Argonne, LLC. All rights reserved.
 # Full license accessible at https://github.com/AdvancedPhotonSource/lauelab/blob/main/LICENSE
-"""Measure chunk shapes and compression for reconstruction-scan pixel data.
+"""Measure chunk shapes and compression for point-file pixel data.
 
 For each candidate the script writes one full-size point stripe by stripe, as
-the scan writer does, and then times the three read patterns of the format:
+the point writer does, and then times the three read patterns of the format:
 one full frame, a small ROI through every depth, and a larger ROI through
 every depth. File pages are evicted before each read, so reads are cold.
 

@@ -58,7 +58,7 @@ class ScanInfo:
     image_geometry: ImageGeometry
     shape: tuple[int, int, int]
     dtype: np.dtype
-    intensity_map: np.ndarray
+    intensity_map: np.ndarray | None
     wire_xyz: np.ndarray
     positioner: str
     file_time: str | None
@@ -104,15 +104,21 @@ def positioner_from_file_time(value: str | None) -> str:
     return "alio"
 
 
-def read_scan_info(source: h5py.File, normalization: str | None = None) -> ScanInfo:
-    """Read metadata and aligned wire positions from an open scan file."""
+def read_scan_info(source: h5py.File, normalization: str | None = None, *,
+                   intensity_map: bool = True) -> ScanInfo:
+    """Read metadata and aligned wire positions from an open scan file.
+
+    ``intensity_map=False`` skips reading the intensity-map frame and leaves
+    ``ScanInfo.intensity_map`` as ``None``; scan preparation needs only the
+    metadata of each input.
+    """
     try:
-        return _read_scan_info(source, normalization)
+        return _read_scan_info(source, normalization, intensity_map)
     except (ValueError, TypeError, OverflowError, KeyError) as error:
         raise InputError(f"invalid metadata in {source.filename}: {error}") from error
 
 
-def _read_scan_info(source, normalization) -> ScanInfo:
+def _read_scan_info(source, normalization, read_intensity_map) -> ScanInfo:
     name = "entry1/data/data"
     if name not in source:
         raise InputError(f"input file has no {name!r} dataset")
@@ -172,7 +178,7 @@ def _read_scan_info(source, normalization) -> ScanInfo:
         image_geometry=ImageGeometry(nx, ny, start, group, rows, cols),
         shape=(n_images, rows, cols),
         dtype=data.dtype,
-        intensity_map=np.asarray(data[1], dtype=np.float64),
+        intensity_map=np.asarray(data[1], dtype=np.float64) if read_intensity_map else None,
         wire_xyz=wire_xyz,
         positioner=positioner_from_file_time(file_time),
         file_time=file_time,

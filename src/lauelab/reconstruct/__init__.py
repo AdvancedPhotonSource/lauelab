@@ -11,7 +11,8 @@ from . import inspection
 from ._per_depth_reader import PerDepthReader
 from ._scan_reader import PointEntry, PointReader, ScanFileSummary, ScanReader, validate_scan_file
 from .batch import reconstruct_points
-from .scan import PointOutcome, ScanResult, reconstruct_scan
+from .scan import (PointOutcome, PointTask, PreparedScan, ScanResult, prepare_scan,
+                   reconstruct_point, reconstruct_scan)
 from .reconstructor import ImageGeometry, Reconstructor, StripeTiming
 from .reconstruct import (
     reconstruct,
@@ -31,8 +32,12 @@ __all__ = [
     'reconstruct_points',
     'ImageGeometry',
     'StripeTiming',
-    # Single-file scan output
+    # Scan directories: a catalog plus one file per point
     'reconstruct_scan',
+    'prepare_scan',
+    'reconstruct_point',
+    'PreparedScan',
+    'PointTask',
     'ScanResult',
     'PointOutcome',
     'ScanReader',

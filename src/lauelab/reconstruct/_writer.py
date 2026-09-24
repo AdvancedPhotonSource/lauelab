@@ -34,7 +34,7 @@ def normalization_rescale(output_type: int) -> float:
                   6: 1 << 3, 7: (1 << 4) - 1}.get(output_type, 1))
 
 
-def _copy_metadata(source: h5py.File, target: h5py.File) -> None:
+def _copy_metadata(source: h5py.File, target: h5py.File, *, exclude_entry=(), exclude_data=()) -> None:
     for key, value in source.attrs.items():
         target.attrs[key] = value
     for name in source:
@@ -43,14 +43,14 @@ def _copy_metadata(source: h5py.File, target: h5py.File) -> None:
             for key, value in source[name].attrs.items():
                 entry.attrs[key] = value
             for child in source[name]:
-                if child == "wire":
+                if child == "wire" or child in exclude_entry:
                     continue
                 if child == "data":
                     group = entry.create_group("data")
                     for key, value in source[name][child].attrs.items():
                         group.attrs[key] = value
                     for nested in source[name][child]:
-                        if nested != "data":
+                        if nested != "data" and nested not in exclude_data:
                             source.copy(source[name][child][nested], group, name=nested)
                 else:
                     source.copy(source[name][child], entry, name=child)

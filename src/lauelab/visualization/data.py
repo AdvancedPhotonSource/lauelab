@@ -246,7 +246,7 @@ class VisualizationDataset:
     crystal: Crystal | None = None
     geometry: Geometry | None = field(default=None, repr=False, compare=False)
     # The ScanFrame each frame was read from, or None; None for the whole
-    # tuple means no frame came from a scan file.
+    # tuple means no frame came from a point file.
     sources: tuple[ScanFrame | None, ...] | None = None
 
     def __repr__(self) -> str:

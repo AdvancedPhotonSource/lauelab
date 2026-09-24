@@ -57,7 +57,7 @@ A converted file carries only the run attributes the XML recorded, when present:
 | `frames/hutch_temperature`, `sample_distance` | `float32` | `(n,)` | unspecified | Acquisition values without an established unit; no conversion applied |
 | `frames/detector_ids` | string | `(n,)` | | Detector identifier |
 | `frames/input_images` | string | `(n,)` | | Source HDF5 path |
-| `frames/source_point_ids` | string | `(n,)` | | Point ID in the scan file at `input_images`, empty for ordinary frames; optional for compatibility with earlier files |
+| `frames/source_point_ids` | string | `(n,)` | | Point ID recorded in the point file at `input_images`, empty for ordinary frames; optional for compatibility with earlier files |
 | `frames/source_depth_indices` | `int32` | `(n,)` | | Zero-based depth index of that frame, `-1` when none; optional, paired with `source_point_ids` |
 | `frames/titles`, `sample_names`, `user_names`, `beamlines`, `dates_exposed`, `ccd_shutters`, `mono_modes` | string | `(n,)` | | Acquisition metadata strings |
 | `frames/image_shapes` | `int32` | `(n, 2)` | | Frame shape as `(rows, columns)` |

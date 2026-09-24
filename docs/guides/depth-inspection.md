@@ -4,7 +4,7 @@ A reconstructed point is a stack of frames, one per sample depth. To examine how
 
 Intensity traces use the **stored** pixels, after conversion to the output pixel type. Signed output types preserve negative values, so a trace can cross zero. [Reconstruction scan format](../development/reconstruction-scan-format.md) defines stored, computed, and raw values.
 
-The examples use a point from a file written by {func}`~lauelab.reconstruct.reconstruct_scan`; see [Reconstruct a wire scan](reconstruction.md). Replace `run/scan.h5` and the point ID with your own.
+The examples inspect a point reconstructed with {func}`~lauelab.reconstruct.reconstruct_scan`; see [Reconstruct a wire scan](reconstruction.md). Replace `run/scan.h5` and the point ID with your own. The same functions accept a {class}`~lauelab.reconstruct.PointReader` opened directly on a point file.
 
 ## Choose a reference image
 
@@ -132,7 +132,7 @@ with PerDepthReader(paths, point_id="scan12_p1") as point:
     trace = depth_trace(point, (60, 65, 50, 55))
 ```
 
-These files have no embedded full-frame reduction, so `depth_trace(point)` reads one frame at a time. The reconstructed reference also reads one frame at a time. Raw references are unavailable and raise `InputError`; retain the scan file if you need those backgrounds. The reader opens at most one file at a time and closes it after each operation. Exiting the context prevents further reads; returned arrays remain usable.
+These files have no embedded full-frame reduction, so `depth_trace(point)` reads one frame at a time. The reconstructed reference also reads one frame at a time. Raw references are unavailable and raise `InputError`; retain the point file if you need those backgrounds. The reader opens at most one file at a time and closes it after each operation. Exiting the context prevents further reads; returned arrays remain usable.
 
 ## Do your own analysis
 
