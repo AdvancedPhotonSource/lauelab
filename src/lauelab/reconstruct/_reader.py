@@ -105,30 +105,32 @@ def positioner_from_file_time(value: str | None) -> str:
 
 
 def read_scan_info(source: h5py.File, normalization: str | None = None, *,
-                   intensity_map: bool = True) -> ScanInfo:
+                   intensity_map: bool = True, frame_skip: int = 1,
+                   wire_skip: int = 1) -> ScanInfo:
     """Read metadata and aligned wire positions from an open scan file.
 
     ``intensity_map=False`` skips reading the intensity-map frame and leaves
     ``ScanInfo.intensity_map`` as ``None``; scan preparation needs only the
-    metadata of each input.
+    metadata of each input. ``frame_skip`` and ``wire_skip`` are the
+    executable's ``MULTI_IMAGE_SKIP`` and ``MULTI_IMAGE_SKIPV``.
     """
     try:
-        return _read_scan_info(source, normalization, intensity_map)
+        return _read_scan_info(source, normalization, intensity_map, frame_skip, wire_skip)
     except (ValueError, TypeError, OverflowError, KeyError) as error:
         raise InputError(f"invalid metadata in {source.filename}: {error}") from error
 
 
-def _read_scan_info(source, normalization, read_intensity_map) -> ScanInfo:
+def _read_scan_info(source, normalization, read_intensity_map, frame_skip, wire_skip) -> ScanInfo:
     name = "entry1/data/data"
     if name not in source:
         raise InputError(f"input file has no {name!r} dataset")
     data = source[name]
     if not isinstance(data, h5py.Dataset):
         raise InputError(f"{name!r} must be a dataset")
-    if data.ndim != 3 or data.shape[0] < 5:
+    if data.ndim != 3 or data.shape[0] < frame_skip + 4:
         raise InputError(
-            "entry1/data/data needs at least 5 stored slices "
-            "(1 skipped, 3 differenced, 1 unused)"
+            f"entry1/data/data needs at least {frame_skip + 4} stored slices "
+            f"({frame_skip} skipped, 3 differenced, 1 unused)"
         )
     if not np.issubdtype(data.dtype, np.number):
         raise InputError(f"input images must have a numeric dtype, not {data.dtype}")
@@ -145,22 +147,26 @@ def _read_scan_info(source, normalization, read_intensity_map) -> ScanInfo:
         int(_scalar(source, "entry1/detector/biny", 1)),
     )
 
-    # Slice 0 is bookkeeping. Slice 1 is the intensity map and first scan
-    # frame; the executable reads but never differences the final stored slice.
-    n_images = data.shape[0] - 2
+    # Slice frame_skip is the intensity map and first scan frame; the
+    # executable reads but never differences the final stored slice. Like the
+    # executable's vector reader, drop entry 0 of a vector longer than one,
+    # then skip wire_skip more entries.
+    n_images = data.shape[0] - frame_skip - 1
     defaults = [float(_scalar(source, f"entry1/wire/wirebase{name}", 0.0)) for name in "XYZ"]
     vectors = []
     for name, default in zip("XYZ", defaults):
         path = f"entry1/wire/wire{name}"
         values = np.asarray(source[path], dtype=np.float64).ravel() if path in source else np.empty(0)
+        values = values[1:] if len(values) > 1 else values
         aligned = np.full(n_images + 1, default if np.isfinite(default) else 0.0)
-        available = values[2:n_images + 3]
+        available = values[wire_skip:wire_skip + n_images + 1]
         aligned[:len(available)] = available
         vectors.append(aligned)
     wire_xyz = np.ascontiguousarray(np.column_stack(vectors), dtype=np.float64)
 
     scale = None
     if normalization:
+        # The executable scales frame f by entry f + 1 whatever frame_skip is.
         path = f"entry1/{normalization}"
         if path not in source:
             raise InputError(f"normalization vector {normalization!r} is missing")
@@ -178,7 +184,7 @@ def _read_scan_info(source, normalization, read_intensity_map) -> ScanInfo:
         image_geometry=ImageGeometry(nx, ny, start, group, rows, cols),
         shape=(n_images, rows, cols),
         dtype=data.dtype,
-        intensity_map=np.asarray(data[1], dtype=np.float64) if read_intensity_map else None,
+        intensity_map=np.asarray(data[frame_skip], dtype=np.float64) if read_intensity_map else None,
         wire_xyz=wire_xyz,
         positioner=positioner_from_file_time(file_time),
         file_time=file_time,

@@ -125,6 +125,8 @@ def settings_values(detector: int, settings: Mapping, geometry_path: str,
         "/settings/norm_exponent": _missing(settings["norm_exponent"], np.nan),
         "/settings/norm_threshold": _missing(settings["norm_threshold"], np.nan),
         "/settings/cosmic_filter": int(settings["cosmic_filter"]),
+        "/settings/frame_skip": settings["frame_skip"],
+        "/settings/wire_skip": settings["wire_skip"],
         "/settings/output_pixel_type": _missing(settings["output_pixel_type"], -1),
         "/settings/rows_per_stripe": _missing(settings["rows_per_stripe"], -1),
         "/settings/memory_limit_mb": settings["memory_limit_mb"],
@@ -215,7 +217,7 @@ def write_point_metadata(file: h5py.File, task, *, info, depth_um, output_type: 
     write_root_attributes(file, format_name=layout.POINT_FORMAT, version=layout.POINT_VERSION)
     for path, attributes in layout.POINT_GROUP_ATTRIBUTES.items():
         file.require_group(path).attrs.update(attributes)
-    n_images, rows, columns = info.shape
+    _, rows, columns = info.shape
     stored = PIXEL_DTYPES[output_type]
     geometry = info.image_geometry
     values = {
@@ -244,7 +246,7 @@ def write_point_metadata(file: h5py.File, task, *, info, depth_um, output_type: 
         "/entry1/reconstruction/normalization/threshold": np.nan,
         "/entry1/reconstruction/normalization/rescale": 1.0,
         "/entry1/reconstruction/first_raw/data": first_raw,
-        "/entry1/reconstruction/acquisition/raw_slices": (1, n_images + 1),
+        "/entry1/reconstruction/acquisition/raw_slices": task.raw_slices,
     }
     dims = {"n_depths": len(depth_um), "rows": rows, "columns": columns}
     for path, spec in {**layout.POINT_SETTINGS_DATASETS, **layout.POINT_DATASETS}.items():

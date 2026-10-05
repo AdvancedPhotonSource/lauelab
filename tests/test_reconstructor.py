@@ -104,6 +104,48 @@ def test_array_and_file_paths_are_identical(tmp_path):
     np.testing.assert_array_equal(array_result.images, file_result.images)
 
 
+@pytest.mark.parametrize(("frame_skip", "wire_skip"), [(1, 1), (0, 0), (0, 1), (3, 2)])
+def test_skips_select_the_executable_slices_and_wire_entries(tmp_path, frame_skip, wire_skip):
+    source = tmp_path / "synthetic.h5"
+    write_input_file(source, write_mA=True)
+    reconstructor = _reconstructor(normalization="mA", frame_skip=frame_skip, wire_skip=wire_skip)
+    file_result = reconstructor.reconstruct(source, return_images=True)
+    with h5py.File(source) as handle:
+        stored = np.asarray(handle["entry1/data/data"])
+        images = stored[frame_skip:-1]
+        # The executable reads header vectors from entry 1, then skips
+        # wire_skip more wire entries; frame_skip does not shift normalization.
+        wire = np.column_stack([
+            np.asarray(handle[f"entry1/wire/wire{name}"])[1 + wire_skip:len(images) + 2 + wire_skip]
+            for name in "XYZ"
+        ])
+        scale = np.asarray(handle["entry1/mA"])[1:len(images) + 1] / 102.0
+    image_geometry = ImageGeometry(FULL_PIXELS, FULL_PIXELS, group=(BINNING, BINNING),
+                                   n_rows=images.shape[1], n_cols=images.shape[2])
+    array_result = reconstructor.reconstruct_array(
+        images, wire, intensity_map=stored[frame_skip], positioner="alio",
+        image_geometry=image_geometry, scale=scale,
+    )
+    assert file_result.success and array_result.success
+    np.testing.assert_array_equal(array_result.images, file_result.images)
+
+
+@pytest.mark.parametrize("name", ["frame_skip", "wire_skip"])
+@pytest.mark.parametrize("value", [-1, 1.0, True])
+def test_skips_must_be_non_negative_integers(name, value):
+    with pytest.raises(InputError, match=f"{name} must be a non-negative integer"):
+        _reconstructor(**{name: value})
+
+
+def test_summary_records_skips_only_when_they_differ_from_the_executable(tmp_path):
+    source = tmp_path / "synthetic.h5"
+    write_input_file(source)
+    output_base = tmp_path / "skipped_"
+    assert _reconstructor(frame_skip=2, wire_skip=0).reconstruct(source, output_base).success
+    tags, _ = _summary(f"{output_base}summary.txt")
+    assert (tags["frame_skip"], tags["wire_skip"]) == ("2", "0")
+
+
 def test_zero_wire_rotation_is_finite_on_native_and_executable_paths(tmp_path):
     source = tmp_path / "synthetic.h5"
     write_input_file(source)
@@ -334,6 +376,8 @@ def test_reader_requires_five_stored_slices(tmp_path):
     with h5py.File(source) as handle:
         with pytest.raises(InputError, match="needs at least 5 stored slices"):
             read_scan_info(handle)
+        with pytest.raises(InputError, match=r"needs at least 6 stored slices \(2 skipped"):
+            read_scan_info(handle, frame_skip=2)
 
 
 def test_cutoff_mask_clamps_extreme_percentile_to_last_pixel():

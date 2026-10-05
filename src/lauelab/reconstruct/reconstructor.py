@@ -131,7 +131,8 @@ class _PerDepthSink:
             wire_edge=_EDGE[options.wire_edge], output_type=output_type,
             percent_brightest=options.percent_brightest,
             memory_limit_mb=options.memory_limit_mb,
-            cosmic_filter=options.cosmic_filter, normalization=options.normalization,
+            cosmic_filter=options.cosmic_filter, frame_skip=options.frame_skip,
+            wire_skip=options.wire_skip, normalization=options.normalization,
             norm_exponent=options.norm_exponent, norm_threshold=threshold,
             norm_rescale=rescale, scan_number=info.scan_number,
             sample_position=info.sample_position, energy_kev=info.energy_kev,
@@ -190,6 +191,17 @@ class Reconstructor:
     cosmic_filter : bool
         Apply the executable-compatible cosmic-ray filter before reconstruction.
         The default is ``False``.
+    frame_skip : int
+        Number of leading stored slices that file input skips. Slice
+        ``frame_skip`` is the intensity map and the first scan frame. The
+        default is ``1``, the executable's ``MULTI_IMAGE_SKIP``. The
+        normalization vector is not shifted by this value.
+    wire_skip : int
+        Number of stored wire-vector entries skipped after the first entry.
+        Scan frame ``f`` pairs with stored entries ``f + 1 + wire_skip`` and
+        ``f + 2 + wire_skip``. The default is ``1``, the executable's
+        ``MULTI_IMAGE_SKIPV``. Neither skip applies to
+        :meth:`reconstruct_array`.
     output_pixel_type : int or None
         Output-file pixel type. The default is ``None``. Code 0 is
         ``numpy.float32``, 1 is ``numpy.int32``, 2
@@ -234,6 +246,8 @@ class Reconstructor:
         norm_exponent: float | None = None,
         norm_threshold: float | None = None,
         cosmic_filter: bool = False,
+        frame_skip: int = 1,
+        wire_skip: int = 1,
         output_pixel_type: int | None = None,
         num_threads: int | None = None,
         rows_per_stripe: int | None = None,
@@ -255,6 +269,9 @@ class Reconstructor:
             raise InputError("wire_edge must be 'leading', 'trailing', or 'both'")
         if not 0 < percent_brightest <= 100:
             raise InputError("percent_brightest must be greater than 0 and at most 100")
+        for name, value in (("frame_skip", frame_skip), ("wire_skip", wire_skip)):
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 0:
+                raise InputError(f"{name} must be a non-negative integer")
         if output_pixel_type is not None and output_pixel_type not in PIXEL_DTYPES:
             raise InputError("output_pixel_type must be one of 0, 1, 2, 3, 5, 6, or 7")
         if num_threads is not None and num_threads < 1:
@@ -272,6 +289,8 @@ class Reconstructor:
         self.norm_exponent = norm_exponent
         self.norm_threshold = norm_threshold
         self.cosmic_filter = bool(cosmic_filter)
+        self.frame_skip = int(frame_skip)
+        self.wire_skip = int(wire_skip)
         self.output_pixel_type = output_pixel_type
         self.num_threads = physical_core_count() if num_threads is None else num_threads
         self.rows_per_stripe = rows_per_stripe
@@ -345,18 +364,23 @@ class Reconstructor:
         if not path.is_file():
             raise InputError(f"input file does not exist: {path}")
         with h5py.File(path, "r") as source:
-            info = read_scan_info(source, self.normalization)
+            info = self._scan_info(source)
             sink = None
             if output_base is not None:
                 sink = _PerDepthSink(self, source, output_base, info)
             return self._run_file(source, info, sink, return_images)
 
+    def _scan_info(self, source, *, intensity_map=True):
+        return read_scan_info(source, self.normalization, intensity_map=intensity_map,
+                              frame_skip=self.frame_skip, wire_skip=self.wire_skip)
+
     def _run_file(self, source, info, sink, return_images) -> ReconstructionResult:
         data = source["entry1/data/data"]
         stripe_data = data if info.dtype == np.dtype(np.uint16) else data.astype("f8")
+        first, stop = self.frame_skip, self.frame_skip + info.shape[0]
         return self._run(
             lambda row0, row1: np.ascontiguousarray(
-                stripe_data[1:-1, row0:row1, :]
+                stripe_data[first:stop, row0:row1, :]
             ),
             info.shape, info.dtype, info.wire_xyz,
             intensity_map=info.intensity_map,

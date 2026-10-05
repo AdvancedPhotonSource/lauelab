@@ -22,6 +22,8 @@ The constructor options control the depth grid, the wire edge, and the normaliza
 | `norm_exponent` | `None` | | Exponent normalization from the intensity map. |
 | `norm_threshold` | `None` | counts | Threshold for exponent normalization. `None` derives it from the intensity map. |
 | `cosmic_filter` | `False` | | Remove single-frame spikes before differencing. |
+| `frame_skip` | `1` | slices | Leading stored slices to skip. File input only. |
+| `wire_skip` | `1` | entries | Stored wire-vector entries to skip after entry 0. File input only. |
 | `output_pixel_type` | `None` | | Pixel type code for written files. |
 | `num_threads` | `None` | | OpenMP threads per call. `None` estimates physical cores. Scans use `threads_per_worker` instead. |
 | `rows_per_stripe` | `None` | rows | Rows per stripe. `None` uses at most 256, fewer to respect the memory limit. |
@@ -80,9 +82,16 @@ The default {class}`~lauelab.reconstruct.ImageGeometry` describes an unbinned fu
 
 ## How a point file is read
 
-A 34-ID-E multi-image file stores a bookkeeping frame at slice 0, which is skipped. Slice 1 is both the intensity map and the first scan frame. The last stored slice is never differenced. An `N`-slice file therefore reconstructs scan frames from slices 1 to `N - 2`, and needs at least 5 slices.
+A 34-ID-E multi-image file contains bookkeeping entries at the start of the image stack and of each wire vector. Two options set how many entries are skipped. Their defaults are the values compiled into `reconstructN_cpu`:
 
-Stored wire vectors include acquisition bookkeeping entries. Scan frame `f` pairs with stored wire entries `f + 2` and `f + 3`. This offset applies to file input only.
+- `frame_skip` is the executable's `MULTI_IMAGE_SKIP`. Slice `frame_skip` is both the intensity map and the first scan frame. The last stored slice is never differenced. An `N`-slice file therefore reconstructs scan frames from slices `frame_skip` to `N - 2`, and needs at least `frame_skip + 4` slices.
+- `wire_skip` is the executable's `MULTI_IMAGE_SKIPV`. The executable always ignores entry 0 of a stored vector that has more than one entry, and `wire_skip` counts the entries skipped after it. Zero-based scan frame `f` pairs with stored wire entries `f + 1 + wire_skip` and `f + 2 + wire_skip`.
+
+With both defaults, scan frame `f` is stored slice `f + 1` and pairs with wire entries `f + 2` and `f + 3`. The normalization vector is not shifted by `frame_skip`: scan frame `f` is scaled by entry `f + 1`, as in the executable.
+
+```{warning}
+`frame_skip` and `wire_skip` determine which wire positions are paired with each frame, and therefore the depth assigned to the intensity in each frame. Change them only to match a documented acquisition layout.
+```
 
 The positioner correction comes from the file's `file_time` attribute. Files before May 2006 get no correction, files before October 2009 get the PM500 correction, and later files get the Alio identity correction. Matching the executable, a `file_time` written with the ISO `T` separator is not parsed and receives no correction.
 
@@ -307,3 +316,7 @@ Invalid arguments, geometry, file metadata, and array shapes raise `InputError` 
 ## Cross-check with the executable
 
 {func}`~lauelab.reconstruct.reconstruct` runs the `reconstructN_cpu` program in a subprocess and returns the same result type. The in-process path reproduces its output bit for bit on the regression references. Use the executable as an independent check when validating a new acquisition configuration.
+
+```{note}
+`reconstructN_cpu` and `reconstructN_gpu` are compiled with `MULTI_IMAGE_SKIP` and `MULTI_IMAGE_SKIPV` equal to 1. `reconstruct` and `reconstruct_gpu` therefore have no `frame_skip` or `wire_skip` argument, and the executables cannot cross-check a reconstruction that uses other values.
+```

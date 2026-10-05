@@ -110,7 +110,8 @@ def write_summary(path: str | Path, *, input_path: str, output_base: str,
                   geometry_path: str, detector: int, depth_um: np.ndarray,
                   resolution: float, wire_edge: int, output_type: int,
                   percent_brightest: float, memory_limit_mb: int,
-                  cosmic_filter: bool, normalization: str | None,
+                  cosmic_filter: bool, frame_skip: int, wire_skip: int,
+                  normalization: str | None,
                   norm_exponent: float | None, norm_threshold: float | None,
                   norm_rescale: float, scan_number: int | None,
                   sample_position: tuple[float, float, float] | None,
@@ -140,6 +141,11 @@ def write_summary(path: str | Path, *, input_path: str, output_base: str,
         f"$ws_percentOfPixels\t\t{percent_brightest:g}",
         f"$ws_MiB_RAM\t\t\t\t{memory_limit_mb}",
         f"$cosmic_filter\t\t\t{int(cosmic_filter)}",
+    ])
+    if (frame_skip, wire_skip) != (1, 1):
+        # The executable fixes both at 1 and does not write them.
+        lines.extend([f"$frame_skip\t\t\t\t{frame_skip}", f"$wire_skip\t\t\t\t{wire_skip}"])
+    lines.extend([
         f"$ws_verbose\t\t\t\t{verbose}",
         "$program_name\t\tliblaue",
         f"$norm_exponent\t\t\t{0 if norm_exponent is None else norm_exponent:g}",

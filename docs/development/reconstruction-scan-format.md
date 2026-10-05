@@ -120,7 +120,7 @@ Three reference images are saved with each point for inspection after the raw in
 | `/entry1/reconstruction/sum_raw/data` | raw | The sum of every selected scan frame. |
 | `/entry1/reconstruction/sum_reconstructed/data` | stored | The sum of the stored frames through depth. |
 
-`/entry1/reconstruction/acquisition/raw_slices` records the half-open range of stored input slices that was selected. For a 34-ID-E multi-image file with `n` stored slices the range is `[1, n - 1)`: slice 0 is bookkeeping, and the last slice is never differenced. See "How a point file is read" in [Reconstruct a wire scan](../guides/reconstruction.md). The raw stack itself is not copied.
+`/entry1/reconstruction/acquisition/raw_slices` records the half-open range of stored input slices that was selected. For a 34-ID-E multi-image file with `n` stored slices the range is `[frame_skip, n - 1)`: the first `frame_skip` slices are bookkeeping, and the last slice is never differenced. See "How a point file is read" in [Reconstruct a wire scan](../guides/reconstruction.md). The raw stack itself is not copied.
 
 
 ## File layout
@@ -151,6 +151,8 @@ The table below gives the catalog paths. Point files store the same fields under
 | `/settings/norm_exponent` | `<f8` | `()` | | NaN | Exponent normalization |
 | `/settings/norm_threshold` | `<f8` | `()` | | NaN | Requested threshold; each point records the value used |
 | `/settings/cosmic_filter` | `u1` | `()` | | | 1 when the cosmic-ray filter ran |
+| `/settings/frame_skip` | `<i4` | `()` | | | Leading stored slices skipped |
+| `/settings/wire_skip` | `<i4` | `()` | | | Stored wire-vector entries skipped after entry 0 |
 | `/settings/output_pixel_type` | `<i4` | `()` | | -1 | Requested pixel type code; each point records the type used |
 | `/settings/rows_per_stripe` | `<i4` | `()` | | -1 | Requested rows per stripe; -1 selects them automatically |
 | `/settings/memory_limit_mb` | `<i4` | `()` | | | Stripe-buffer limit of one worker in MiB |

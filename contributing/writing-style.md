@@ -45,6 +45,32 @@ Vary sentence length naturally. Split a sentence when a reader must backtrack to
 
 Use sentence case for headings.
 
+### State facts plainly
+
+Write what is stored where and what the code does. Do not give files, datasets, detectors, or results agency through figurative verbs, and do not compress an explanation into a catchy phrase that the reader must decode.
+
+Only software that performs an operation can be the subject of an action verb, and the verb must be literal: a function *returns*, *reads*, *writes*, or *raises*; the indexer *reads* a frame. Data does not act. For data, use "contains", "is stored in", "is in", or the passive voice.
+
+| Avoid | Write |
+| --- | --- |
+| What the detector writes | Input file layout |
+| The catalog holds the run settings once. | `scan.h5` contains the reconstruction settings, which are the same for all points. |
+| Three conventions decide which slices are used. | Three conventions of the file format determine which slices are used. |
+| The read rate sets most of the run time. | Most of the run time is spent reading the input file. |
+| The result keeps the reference. | The result contains the `ScanFrame`. |
+| Nothing that `h5py` cannot see | The reader classes read the same datasets as `h5py`. |
+| Depth traces over regions of interest | The summed intensity in a small detector region at each depth |
+| Pixels never leave the worker. | The worker writes the frames to the point file and returns only the status. |
+
+Avoid these related patterns:
+
+- Headings phrased as a teaser ("What the detector writes"). Use a plain description of the content ("Input file layout").
+- A bold lead-in followed by a dash and a gloss. Write a complete sentence.
+- Aphorisms and contrast for effect ("They record, but do not prove, which input was used"). State the limitation directly: "They do not guarantee that the input file was unchanged."
+- Noun stacks used as shorthand for a quantity. Name the quantity and its reduction: what is summed, over which pixels, at which depths.
+
+This applies to code comments, printed messages, plot titles, and notebook prose as well as to the documentation pages.
+
 ## Teaching approach
 
 Organize each page around a reader outcome. Explain enough context for the reader to complete the task and interpret the result.
@@ -292,6 +318,7 @@ Before a narrative page is complete, verify that:
 - Deep algorithm material does not interrupt the main task.
 - Links replace unnecessary duplication.
 - The text contains no promotional filler, chatbot phrasing, or generic conclusion.
+- Data, files, and devices are not given figurative actions ("the catalog holds", "the detector writes"), and no heading or phrase needs decoding.
 - Simplification has not removed uncertainty or scientific precision.
 
 ## Items that require domain review

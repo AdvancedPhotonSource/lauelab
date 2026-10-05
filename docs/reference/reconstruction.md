@@ -18,6 +18,8 @@ The subprocess environment defaults `OPENBLAS_NUM_THREADS` to `1`. The reconstru
 
 The `reconstructN_cpu` option `-n <tag>` previously had no effect because the normalization-vector length was taken from an HDF5 status code. It now scales each scan frame by `entry1/<tag>`, falling back to `<tag>` at the file root, divided by 102 for `mA` and 88100 for `cnt3`. The in-process path applies the same divisors but reads only `entry1/<tag>`, and it raises {class}`~lauelab.indexing.InputError` when that vector is missing or shorter than the scan. The executable silently skips normalization in the same case. This asymmetry is deliberate: the in-process path reports a request it cannot honour.
 
+`Reconstructor` accepts `frame_skip` and `wire_skip`, the executable's compiled `MULTI_IMAGE_SKIP` and `MULTI_IMAGE_SKIPV`. Both default to 1, which gives the same output as earlier releases. Scan and point files now contain `/settings/frame_skip` and `/settings/wire_skip` without a version change. Version 2 files written by earlier releases do not contain these datasets and fail validation; reconstruct those points again.
+
 A wire axis exactly parallel to the positioner x axis, with a zero wire rotation vector, now uses the identity transformation in both reconstruction paths. Earlier `reconstructN_cpu` releases produced non-finite values for this valid zero-rotation geometry.
 
 ```{eval-rst}

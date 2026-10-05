@@ -29,7 +29,6 @@ from lauelab.indexing import Geometry
 from lauelab.indexing.errors import InputError, InvalidScanFile, LaueError, ReconstructionError
 
 from . import _scan_layout as layout
-from ._reader import read_scan_info
 from ._scan_layout import PointStatus, RunStatus
 from ._scan_reader import _metadata_equal, validate_point
 from ._scan_writer import (COMPRESSION, PointSink, _missing, native_version, settings_values,
@@ -48,8 +47,8 @@ EXPECTED_POINT_ERRORS = (LaueError, MemoryError, OSError)
 # one of them: it belongs to the process that executes the task.
 SETTING_NAMES = (
     "depth_range", "resolution", "wire_edge", "percent_brightest", "normalization",
-    "norm_exponent", "norm_threshold", "cosmic_filter", "output_pixel_type",
-    "rows_per_stripe", "memory_limit_mb",
+    "norm_exponent", "norm_threshold", "cosmic_filter", "frame_skip", "wire_skip",
+    "output_pixel_type", "rows_per_stripe", "memory_limit_mb",
 )
 
 
@@ -228,23 +227,23 @@ def _inspect(source: Path, reconstructor: Reconstructor) -> dict:
     with h5py.File(source, "r") as file:
         if "entry1/reconstruction" in file:
             raise InputError("input contains reserved group /entry1/reconstruction")
-        info = read_scan_info(file, reconstructor.normalization, intensity_map=False)
+        info = reconstructor._scan_info(file, intensity_map=False)
     if info.scan_number is not None and not 0 <= info.scan_number <= np.iinfo(np.int32).max:
         raise InputError(f"invalid metadata in {source}: scan number {info.scan_number} "
                          f"is outside 0 to {np.iinfo(np.int32).max}")
     depth_um = reconstructor._depth_grid(info.image_geometry)
-    return _input_description(info, depth_um, reconstructor._output_type(info.dtype))
+    return _input_description(info, depth_um, reconstructor)
 
 
-def _input_description(info, depth_um, pixel_type) -> dict:
+def _input_description(info, depth_um, reconstructor) -> dict:
     """Metadata frozen in a task and checked again before reconstruction."""
     n_images, rows, columns = info.shape
     return {
         "image_shape": (rows, columns),
         "n_depths": len(depth_um),
         "depth_bounds_um": (float(depth_um[0]), float(depth_um[-1])),
-        "pixel_type": pixel_type,
-        "raw_slices": (1, n_images + 1),
+        "pixel_type": reconstructor._output_type(info.dtype),
+        "raw_slices": (reconstructor.frame_skip, reconstructor.frame_skip + n_images),
         "scan_number": info.scan_number,
         "sample_position": tuple(None if np.isnan(value) else value
                                  for value in info.sample_position),
@@ -282,7 +281,7 @@ def _reconstructor(task: PointTask, num_threads: int | None) -> Reconstructor:
 def _check_unchanged(task: PointTask, info, reconstructor: Reconstructor) -> np.ndarray:
     """Return the depth grid; raise ``InputError`` if the input no longer matches ``task``."""
     depth_um = reconstructor._depth_grid(info.image_geometry)
-    found = _input_description(info, depth_um, reconstructor._output_type(info.dtype))
+    found = _input_description(info, depth_um, reconstructor)
     for name, value in found.items():
         expected = getattr(task, name)
         if value != expected:
@@ -348,9 +347,9 @@ def _execute(task: PointTask, num_threads: int | None) -> PointOutcome:
             source_stat = os.stat(task.source)
             if "entry1/reconstruction" in source:
                 raise InputError("input contains reserved group /entry1/reconstruction")
-            info = read_scan_info(source, reconstructor.normalization)
+            info = reconstructor._scan_info(source)
             depth_um = _check_unchanged(task, info, reconstructor)
-            first_raw = source["entry1/data/data"][1]
+            first_raw = source["entry1/data/data"][reconstructor.frame_skip]
             metadata = stack.enter_context(h5py.File(io.BytesIO(), "w"))
             _copy_metadata(source, metadata)
         except EXPECTED_POINT_ERRORS as error:

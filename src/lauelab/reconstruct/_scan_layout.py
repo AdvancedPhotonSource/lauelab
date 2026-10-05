@@ -49,7 +49,7 @@ SCAN_FILENAME = "scan.h5"
 POINT_DIRECTORY = "points"
 POINT_SUFFIX = ".h5"
 
-RAW_SELECTION = "34ide-multi-image: stored slices [1, n_stored - 1)"
+RAW_SELECTION = "34ide-multi-image: stored slices [frame_skip, n_stored - 1)"
 
 
 class PointStatus(IntEnum):
@@ -118,6 +118,8 @@ SETTINGS_DATASETS = MappingProxyType({
     "/settings/norm_exponent": _spec(F8, missing="nan"),
     "/settings/norm_threshold": _spec(F8, missing="nan"),
     "/settings/cosmic_filter": _spec(U1),
+    "/settings/frame_skip": _spec(I4),
+    "/settings/wire_skip": _spec(I4),
     "/settings/output_pixel_type": _spec(I4, missing=-1),
     "/settings/rows_per_stripe": _spec(I4, missing=-1),
     "/settings/memory_limit_mb": _spec(I4),

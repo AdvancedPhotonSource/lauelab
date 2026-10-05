@@ -290,6 +290,21 @@ def test_raw_references_exclude_bookkeeping_slices_and_precede_processing(tmp_pa
             point.reference("sum")
 
 
+def test_points_record_skips_and_reconstruct_the_selected_slices(tmp_path):
+    source = _source(tmp_path)
+    options = _options(frame_skip=2, wire_skip=0)
+    expected = Reconstructor(GEOMETRY_FILE, 0, num_threads=1, **options).reconstruct(
+        source, return_images=True
+    )
+    with h5py.File(source) as handle:
+        raw = np.asarray(handle["entry1/data/data"])
+    with PointReader(_point(tmp_path / "scan", source, frame_skip=2, wire_skip=0)) as point:
+        assert (point.settings["frame_skip"], point.settings["wire_skip"]) == (2, 0)
+        assert point.raw_slices == (2, len(raw) - 1)
+        np.testing.assert_array_equal(point.reference("first_raw"), raw[2])
+        np.testing.assert_array_equal(point.region((0, 128, 0, 128)), expected.images)
+
+
 def test_float_input_sums_raw_frames_in_float64(tmp_path):
     source = _source(tmp_path)
     with h5py.File(source, "r+") as handle:
