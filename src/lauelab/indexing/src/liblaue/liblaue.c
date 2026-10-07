@@ -353,7 +353,8 @@ int laue_find_peaks_typed(const void *pixels, int pixel_type, int nx, int ny,
         return result->status;
     }
     /* max_peaks == 0 means no limit; see laue_peak_params. */
-    if (params->boxsize < 1 || params->min_size < 1 || params->max_peaks < 0 ||
+    if (params->boxsize < 1 || !(params->min_size > 0.0) || params->min_size > INT_MAX ||
+        params->max_peaks < 0 ||
         params->min_separation < 1 || (params->peak_shape != 0 && params->peak_shape != 1)) {
         result->status = LAUE_INVALID_ARGUMENT;
         snprintf(result->message, sizeof(result->message), "invalid or unsupported peak-search parameters");
@@ -444,7 +445,7 @@ int laue_find_peaks_typed(const void *pixels, int pixel_type, int nx, int ny,
 
     {
         int helper_status = 0;
-        blobs = blobsearch(&grid, threshold, params->min_size, true, &helper_status);
+        blobs = blobsearch(&grid, threshold, (int)params->min_size, true, &helper_status);
         if (!blobs || helper_status) goto allocation_error;
         if (sorListPoints(blobs)) goto allocation_error;
         /* processBlobs treats a non-positive limit as no limit. */

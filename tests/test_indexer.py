@@ -4,6 +4,7 @@ from dataclasses import replace
 import inspect
 from pathlib import Path
 import re
+import shutil
 from xml.etree import ElementTree
 
 import h5py
@@ -100,6 +101,47 @@ def test_indexer_matches_lauego_peak_and_q_reference():
     np.testing.assert_allclose(result.peaks["chisq"], expected_peaks[:, 7], atol=5e-6, rtol=1e-5)
     # The reference q vectors were computed from peak positions rounded to 0.001 px.
     np.testing.assert_allclose(result.peaks["qhat"], expected_q[:, :3], atol=2e-7, rtol=0)
+
+
+
+@pytest.mark.parametrize(("min_size", "expected_peaks"), [(2.9, 36), (3, 18)])
+def test_fractional_min_size_matches_lauego_peaksearch(tmp_path, min_size, expected_peaks):
+    """Blob size uses int(min_size) and the width floor uses min_size / 4, as in the CLI."""
+    from lauelab.indexing.index import _run_peaksearch
+
+    # Alternating 3x3 and 4x4 plateaus: extents 2 and 3 px. int(2.9) keeps both sizes.
+    image = np.full((2048, 2048), 10, dtype=np.uint16)
+    corners = [(y, x) for y in range(200, 1900, 300) for x in range(200, 1900, 300)]
+    for k, (y, x) in enumerate(corners):
+        width = 3 if k % 2 else 4
+        image[y:y + width, x:x + width] = 900
+    frame = tmp_path / "plateaus.h5"
+    shutil.copy(FRAMES / "synthetic_ni_two_grains.h5", frame)
+    with h5py.File(frame, "r+") as target:
+        target["entry1/data/data"][...] = image
+
+    params = PeakParams(threshold=100.0, boxsize=4, min_size=min_size, min_separation=3, max_peaks=200)
+    result = Indexer(GEOMETRY, peak_params=params).index(image)
+    success, _, stderr, _, _ = _run_peaksearch(
+        str(frame), str(tmp_path), params.boxsize, params.max_rfactor, min_size,
+        params.min_separation, params.threshold, params.peak_shape, params.max_peaks,
+        None, None, False,
+    )
+    assert success, stderr
+    peaks_file = tmp_path / "peaks_plateaus.txt"
+    minwidth = next(
+        float(line.split()[1]) for line in peaks_file.read_text().splitlines()
+        if line.startswith("$minwidth")
+    )
+    expected = _table_after(peaks_file, "$peakList")
+
+    assert result.peak_minwidth == pytest.approx(min_size / 4.0)
+    assert minwidth == pytest.approx(min_size / 4.0)
+    assert result.n_peaks == len(expected) == expected_peaks
+    np.testing.assert_allclose(result.peaks["fit_x"], expected[:, 0], atol=5e-4, rtol=0)
+    np.testing.assert_allclose(result.peaks["fit_y"], expected[:, 1], atol=5e-4, rtol=0)
+    np.testing.assert_allclose(result.peaks["hwhm_x"], expected[:, 4], atol=5e-4, rtol=0)
+    np.testing.assert_allclose(result.peaks["hwhm_y"], expected[:, 5], atol=5e-4, rtol=0)
 
 
 def test_max_peaks_is_an_exact_cap():

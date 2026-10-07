@@ -74,6 +74,12 @@ params.boxsize = params.min_size = params.min_separation = 1
 params.max_peaks = -1
 assert lib.laue_find_peaks(pixel, 1, 1, params, result) == 1
 assert ffi.string(result.message) == b"invalid or unsupported peak-search parameters"
+params.max_peaks = 1
+for min_size in (0.0, -1.5, float("nan"), float("inf"), 2.0 ** 31):
+    params.min_size = min_size
+    assert lib.laue_find_peaks(pixel, 1, 1, params, result) == 1
+    assert ffi.string(result.message) == b"invalid or unsupported peak-search parameters"
+params.min_size = 1
 assert lib.laue_pixels_to_q(ffi.NULL, 0, result) == 1
 assert result.status == 1
 assert ffi.string(result.message) == b"geometry is NULL"

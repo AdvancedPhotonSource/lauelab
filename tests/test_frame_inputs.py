@@ -389,13 +389,14 @@ def test_unlimited_peak_search_finds_more_than_the_default_cap():
 def test_integral_floats_are_normalized_to_int():
     indexer = Indexer(
         GEOMETRY, CRYSTAL,
-        peak_params=PeakParams(boxsize=5.0, min_size=3.0, min_separation=10.0, max_peaks=50.0),
+        peak_params=PeakParams(boxsize=5.0, min_size=3, min_separation=10.0, max_peaks=50.0),
         index_params=IndexParams(hkl_prefer=(0.0, 0, 1.0), max_data=200.0),
     )
 
-    for name in ("boxsize", "min_size", "min_separation", "max_peaks"):
+    for name in ("boxsize", "min_separation", "max_peaks"):
         assert type(getattr(indexer.peak_params, name)) is int
-    assert indexer.peak_params.min_size == 3
+    assert type(indexer.peak_params.min_size) is float
+    assert indexer.peak_params.min_size == 3.0
     assert indexer.index_params.hkl_prefer == (0, 0, 1)
     assert all(type(value) is int for value in indexer.index_params.hkl_prefer)
     assert type(indexer.index_params.max_data) is int
@@ -405,13 +406,10 @@ def test_integral_floats_are_normalized_to_int():
 @pytest.mark.parametrize(
     ("peak_params", "index_params", "name", "shown"),
     [
-        (PeakParams(min_size=3.5), None, "min_size", "3.5"),
-        (PeakParams(min_size=1.13), None, "min_size", "1.13"),
         (PeakParams(boxsize=18.2), None, "boxsize", "18.2"),
         (PeakParams(min_separation=np.float64(20.5)), None, "min_separation", "20.5"),
         (PeakParams(max_peaks=200.5), None, "max_peaks", "200.5"),
         (PeakParams(max_peaks=True), None, "max_peaks", "True"),
-        (PeakParams(min_size="3"), None, "min_size", "'3'"),
         (None, IndexParams(max_data=2.5), "max_data", "2.5"),
         (None, IndexParams(hkl_prefer=(0, 0.5, 1)), "hkl_prefer", "0.5"),
     ],

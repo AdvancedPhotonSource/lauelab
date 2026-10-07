@@ -91,8 +91,13 @@ class PeakParams:
     max_rfactor
         Maximum fit residual factor accepted for a peak. Must be positive.
     min_size
-        Minimum peak size in pixels. Must be a positive whole number; ``3``
-        and ``3.0`` are accepted, ``3.5`` is rejected rather than rounded.
+        Minimum peak size in pixels, as in the LaueGo ``peaksearch -m``
+        option. A blob is kept only if its extent (last minus first pixel
+        index) is at least ``int(min_size)`` in both x and y, and a fitted
+        peak needs a half width at half maximum of at least
+        ``min_size / 12`` pixels in both directions. Must be positive;
+        fractional values such as ``1.13`` are accepted and stored as
+        `float`.
     min_separation
         Minimum separation between accepted peaks in pixels. Must be a
         positive whole number.
@@ -117,12 +122,12 @@ class PeakParams:
     Instances are immutable. Use :func:`dataclasses.replace` to derive a
     configuration with changed values. Parameter validation occurs when an
     :class:`Indexer` is constructed, which also normalizes whole-number
-    floats such as ``3.0`` to ``int``.
+    floats such as ``3.0`` to ``int`` for the count parameters.
     """
 
     boxsize: int = 5
     max_rfactor: float = 2.0
-    min_size: int = 3
+    min_size: float = 3.0
     min_separation: int = 10
     threshold: float | None = 100.0
     threshold_ratio: float | None = None
@@ -670,7 +675,7 @@ class Indexer:
     ) -> tuple[PeakParams, IndexParams]:
         counts = {
             name: _whole_number(getattr(peak, name), name)
-            for name in ("boxsize", "min_size", "min_separation")
+            for name in ("boxsize", "min_separation")
         }
         if peak.max_peaks is not None:
             counts["max_peaks"] = _whole_number(peak.max_peaks, "max_peaks")
@@ -678,6 +683,15 @@ class Indexer:
             raise InputError(
                 "peak sizes, separation, and max_peaks must be positive "
                 "(max_peaks may be None for no limit)"
+            )
+        min_size = peak.min_size
+        if (
+            isinstance(min_size, (bool, np.bool_))
+            or not isinstance(min_size, Real)
+            or not 0 < min_size <= np.iinfo(np.int32).max
+        ):
+            raise InputError(
+                f"min_size must be a positive number of pixels; received {min_size!r}"
             )
         if peak.max_rfactor <= 0:
             raise InputError("max_rfactor must be positive")
@@ -694,7 +708,7 @@ class Indexer:
         if max_data < 2:
             raise InputError("max_data must be at least 2")
         return (
-            replace(peak, **counts),
+            replace(peak, **counts, min_size=float(min_size)),
             replace(indexing, hkl_prefer=hkl_prefer, max_data=max_data),
         )
 

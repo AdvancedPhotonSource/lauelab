@@ -96,7 +96,11 @@ typedef struct {
 typedef struct {
     int boxsize;
     double max_rfactor;
-    int min_size;
+    /* Minimum spot size in pixels, as in the peaksearch CLI's -m: a blob's
+       x and y extents (last minus first pixel) must be at least
+       (int)min_size, and fitted peaks need a HWHM of at least min_size / 12.
+       Must be positive and at most INT_MAX. */
+    double min_size;
     int min_separation;
     double threshold;
     double threshold_ratio;

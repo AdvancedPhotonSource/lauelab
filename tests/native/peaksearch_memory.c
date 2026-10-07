@@ -57,7 +57,7 @@ int main(void)
 
     params.boxsize = 6;
     params.max_rfactor = 1.0;
-    params.min_size = 2;
+    params.min_size = 2.5;
     params.min_separation = 5;
     params.threshold = 100.0;
     params.threshold_ratio = 4.0;

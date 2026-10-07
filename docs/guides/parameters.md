@@ -27,7 +27,7 @@ Record the complete parameter objects with analysis output. A result alone does 
 |---|---:|---|---|
 | `boxsize` | `5` | px | Half-width of the square fitting region. Must be a positive whole number. |
 | `max_rfactor` | `2.0` | dimensionless | Maximum accepted fit residual factor. Must be positive. |
-| `min_size` | `3` | px | Minimum accepted peak size. Must be a positive whole number. |
+| `min_size` | `3.0` | px | Minimum accepted peak size, the LaueGo `peaksearch -m` value. A blob is kept only if its extent (last minus first pixel index) is at least `int(min_size)` in both x and y, and a fitted peak needs a HWHM of at least `min_size / 12` in both. Must be positive; fractions are allowed. |
 | `min_separation` | `10` | px | Minimum separation between accepted peaks. Must be a positive whole number. |
 | `threshold` | `100.0` | detector counts | Absolute detection threshold. Use `None` for an automatically derived threshold. |
 | `threshold_ratio` | `None` | dimensionless | Scale applied to the frame standard deviation for automatic thresholding. `None` resolves to the native default, `4.0`. |
@@ -35,7 +35,7 @@ Record the complete parameter objects with analysis output. A result alone does 
 | `max_peaks` | `50` | peaks | Maximum number of returned peaks, a positive whole number, or `None` for no limit: every blob above the threshold is fitted. |
 | `smooth` | `False` | none | Applies native image smoothing before detection and fitting. Frame sums continue to describe the raw input image; an automatically derived threshold is computed from the smoothed image. |
 
-Whole-number parameters accept an integral float: `min_size=3.0` is the same as `min_size=3`, and the `Indexer` stores the `int`. A fractional value such as `3.5` raises {class}`~lauelab.indexing.InputError` naming the parameter; nothing is rounded silently.
+Whole-number parameters (`boxsize`, `min_separation`, `max_peaks`) accept an integral float: `boxsize=18.0` is the same as `boxsize=18`, and the `Indexer` stores the `int`. A fractional value such as `18.5` raises {class}`~lauelab.indexing.InputError` naming the parameter; nothing is rounded silently.
 
 With `max_peaks=None`, a frame with many blobs takes longer and returns more peaks. XML output then omits the `max_number` attribute, and the results file records `max_peaks` as `NaN`.
 

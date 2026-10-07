@@ -124,7 +124,7 @@ def parse_full_step_data(
     cosmic_filter: bool = False,
     boxsize: int = 5,
     max_rfactor: float = 2.0,
-    min_size: int = 3,
+    min_size: float = 3,
     min_separation: int = 10,
     threshold: int = 100,
     peak_shape: str = 'L',

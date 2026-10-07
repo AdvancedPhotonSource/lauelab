@@ -38,7 +38,7 @@ ffi.cdef(
         int bin_i, bin_j, n_rows_total, n_cols;
     } laue_recon_params;
     typedef struct {
-        int boxsize; double max_rfactor; int min_size, min_separation;
+        int boxsize; double max_rfactor, min_size; int min_separation;
         double threshold, threshold_ratio; int peak_shape, max_peaks, smooth;
         const unsigned char *mask;
     } laue_peak_params;

@@ -19,7 +19,7 @@ The in-process API separates invalid input from native processing failures. Catc
 
 `InputError` reports invalid processing configuration, including:
 
-- Peak or indexing parameters outside supported ranges, or a fractional value such as `min_size=3.5` where a whole number is required
+- Peak or indexing parameters outside supported ranges, or a fractional value such as `boxsize=18.5` where a whole number is required
 - An unknown detector identifier or inactive detector slot
 - A frame that is not a two-dimensional array of a supported dtype, or a floating-point frame with non-finite values
 - Invalid `start`, `group`, or `depth`

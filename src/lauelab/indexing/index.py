@@ -160,7 +160,7 @@ def _setup_output_dirs(output_dir: Union[str, Path]) -> Dict[str, Path]:
 
 
 def _run_peaksearch(input_image: str, output_dir: str,
-                   boxsize: int, max_rfactor: float, min_size: int,
+                   boxsize: int, max_rfactor: float, min_size: float,
                    min_separation: int, threshold: int, peak_shape: str,
                    max_peaks: int, mask_file: Optional[str],
                    threshold_ratio: Optional[float], smooth: bool,
@@ -434,7 +434,7 @@ def lauego(input_image: str, output_dir: str, geo_file: str, crystal_file: str,
           # Peak search parameters
           boxsize: int = 5,
           max_rfactor: float = 2.0,
-          min_size: int = 3,
+          min_size: float = 3,
           min_separation: int = 10,
           threshold: int = 100,
           peak_shape: str = 'L',
