@@ -319,6 +319,8 @@ def test_native_failures_map_to_exceptions_and_release_results(
     indexer = Indexer(GEOMETRY)
     library = _FailingLibrary(stage, status)
     monkeypatch.setattr(indexer_module, "get_library", lambda: library)
+    # Pixel-to-q conversion calls the native library through the handle stored on the geometry.
+    monkeypatch.setattr(indexer.geometry, "_library", library)
 
     with pytest.raises(error, match=f"{stage} failed: injected failure"):
         indexer.index(np.zeros((4, 5), dtype=np.uint16))

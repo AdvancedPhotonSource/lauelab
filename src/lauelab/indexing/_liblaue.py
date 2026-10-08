@@ -373,8 +373,10 @@ class Geometry:
         Parameters
         ----------
         peaks
-            Array-like peak coordinates with shape ``(n, 2)``. Columns are
-            zero-based ``(x, y)`` coordinates in the supplied frame.
+            Array-like peak coordinates with shape ``(n, 2)``, whose columns
+            are zero-based ``(x, y)`` coordinates in the supplied frame, or a
+            structured array with shape ``(n,)`` and ``fit_x`` and ``fit_y``
+            fields, such as ``FrameResult.peaks`` or ``PeakSearch.peaks``.
         detector_index
             Physical detector slot from the geometry file.
         start
@@ -404,6 +406,11 @@ class Geometry:
         Grouped coordinates are mapped to the center of the corresponding
         detector-pixel group before bounds validation and conversion.
         """
+        names = getattr(getattr(peaks, "dtype", None), "names", None)
+        if names is not None:
+            if np.ndim(peaks) != 1 or not {"fit_x", "fit_y"} <= set(names):
+                raise ValueError("structured peaks must have shape (n,) and fit_x and fit_y fields")
+            peaks = np.column_stack([peaks["fit_x"], peaks["fit_y"]])
         pixels = np.asarray(peaks, dtype=np.float64)
         if pixels.ndim != 2 or pixels.shape[1] != 2:
             raise ValueError("peaks must have shape (n, 2)")
@@ -427,6 +434,17 @@ class Geometry:
                     f"peak coordinates fall outside detector bounds {detector.nx}x{detector.ny}"
                 )
 
+        qhat, status, message = self._pixels_to_q(pixels, detector_index, start, group, depth)
+        if status:
+            raise RuntimeError(message)
+        return qhat
+
+    def _pixels_to_q(self, pixels, detector_index, start, group, depth):
+        """Convert ``(n, 2)`` coordinates without Python-side validation.
+
+        Returns the ``(n, 3)`` unit scattering vectors, the native status, and
+        the native message, which is empty on success.
+        """
         c_peaks = ffi.new("laue_peak[]", len(pixels))
         for index, (x, y) in enumerate(pixels):
             c_peaks[index].fit_x = x
@@ -439,13 +457,12 @@ class Geometry:
         result.n_peaks = len(pixels)
         result.peaks = c_peaks
         status = self._library.laue_pixels_to_q(self._handle, detector_index, result)
-        if status:
-            raise RuntimeError(ffi.string(result.message).decode(errors="replace"))
-
-        return np.asarray(
+        message = ffi.string(result.message).decode(errors="replace") if status else ""
+        qhat = np.asarray(
             [[c_peaks[i].qhat[j] for j in range(3)] for i in range(len(pixels))],
             dtype=np.float64,
         ).reshape((-1, 3))
+        return qhat, status, message
 
 
 def load_geometry(path: str | Path) -> Geometry:

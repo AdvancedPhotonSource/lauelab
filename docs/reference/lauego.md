@@ -4,6 +4,13 @@ The LaueGo API invokes command-line executables and writes intermediate files.
 New integrations should use `index_frame` or `Indexer` from the
 {doc}`processing` API.
 
+Each program has a corresponding in-process stage:
+`peaksearch` corresponds to {func}`~lauelab.indexing.peak_search`, `pix2qs` to
+{meth}`Geometry.pixels_to_q <lauelab.indexing.Geometry.pixels_to_q>`, and
+`euler` to {func}`~lauelab.indexing.index_orientations`. The `lauego` function
+runs all three programs in one call; the programs are not exposed as separate
+Python functions.
+
 ## Subprocess pipeline
 
 ```{eval-rst}

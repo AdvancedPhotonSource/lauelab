@@ -40,6 +40,84 @@ static void add_saturated_plateau(unsigned short *pixels, int center_x, int cent
     }
 }
 
+/* The 24 q vectors in tests/data/synthetic/baseline/p2q/p2q_synthetic_ni_grain_a.txt.
+   The euler CLI indexes all 24 as one Ni grain. */
+static const double GRAIN_A_QHAT[][3] = {
+    {-0.1342000, 0.5768306, -0.8057647},
+    {0.2233914, 0.7493781, -0.6233207},
+    {0.0909368, 0.7003385, -0.7079947},
+    {-0.2850511, 0.7233420, -0.6289056},
+    {0.0285809, 0.6711168, -0.7408005},
+    {-0.2449899, 0.6878527, -0.6832559},
+    {-0.0746038, 0.8048531, -0.5887663},
+    {0.1980575, 0.6108218, -0.7665963},
+    {-0.0070593, 0.6527004, -0.7575833},
+    {0.1430009, 0.7217765, -0.6771923},
+    {-0.2214997, 0.6658232, -0.7124727},
+    {-0.0897702, 0.7571957, -0.6469900},
+    {0.3043418, 0.7699775, -0.5608126},
+    {0.0699723, 0.8360835, -0.5441216},
+    {-0.0299962, 0.6401918, -0.7676292},
+    {-0.2061572, 0.6509665, -0.7305763},
+    {0.1416239, 0.6098923, -0.7797269},
+    {-0.0989078, 0.7253992, -0.6811852},
+    {0.2645284, 0.6535216, -0.7091786},
+    {0.0282047, 0.7941544, -0.6070612},
+    {-0.0459690, 0.6311766, -0.7742757},
+    {-0.1765903, 0.8066854, -0.5639809},
+    {0.0548782, 0.6839099, -0.7274996},
+    {0.1010929, 0.6079771, -0.7874923},
+};
+
+enum { GRAIN_A_COUNT = sizeof(GRAIN_A_QHAT) / sizeof(GRAIN_A_QHAT[0]) };
+
+/* Index a peak array allocated by the caller, as index_orientations does. The
+   caller sets result.peaks to NULL before laue_frame_result_free, so that the
+   call frees only the patterns. */
+static int index_caller_owned_peaks(const laue_crystal *crystal, int zero_peak)
+{
+    static laue_peak peaks[GRAIN_A_COUNT];
+    laue_index_params params = {0};
+    laue_frame_result result = {0};
+    int index;
+    int axis;
+    int status;
+
+    params.kev_max_calc = 17.2;
+    params.kev_max_test = 35.0;
+    params.angle_tolerance_deg = 0.1;
+    params.cone_deg = 72.0;
+    params.hkl_prefer[2] = 1;
+    params.max_data = 250;
+    for (index = 0; index < GRAIN_A_COUNT; ++index) {
+        for (axis = 0; axis < 3; ++axis) peaks[index].qhat[axis] = GRAIN_A_QHAT[index][axis];
+    }
+    if (zero_peak >= 0) {
+        for (axis = 0; axis < 3; ++axis) peaks[zero_peak].qhat[axis] = 0.0;
+    }
+    result.n_peaks = GRAIN_A_COUNT;
+    result.peaks = peaks;
+    status = laue_index(crystal, &params, &result);
+    result.peaks = NULL;
+    result.n_peaks = 0;
+    if (zero_peak >= 0) {
+        laue_frame_result_free(&result);
+        if (status != LAUE_INVALID_ARGUMENT) {
+            fprintf(stderr, "indexing with a zero q vector returned %d\n", status);
+            return 1;
+        }
+        return 0;
+    }
+    if (status != LAUE_OK || result.n_patterns != 1 || result.n_indexed != GRAIN_A_COUNT) {
+        fprintf(stderr, "indexing returned status %d, %d patterns, %d indexed: %s\n",
+                status, result.n_patterns, result.n_indexed, result.message);
+        laue_frame_result_free(&result);
+        return 1;
+    }
+    laue_frame_result_free(&result);
+    return 0;
+}
+
 int main(void)
 {
     unsigned short pixels[IMAGE_WIDTH * IMAGE_HEIGHT];
@@ -111,6 +189,26 @@ int main(void)
             return 1;
         }
         laue_frame_result_free(&result);
+    }
+
+    {
+        laue_atom nickel = {"Ni", 0.0, 0.0, 0.0, 1.0};
+        char error[256];
+        laue_crystal *crystal = laue_crystal_create(
+            "Ni", 225, 3.5238, 3.5238, 3.5238, 90.0, 90.0, 90.0, &nickel, 1, error, sizeof(error)
+        );
+
+        if (!crystal) {
+            fprintf(stderr, "crystal creation failed: %s\n", error);
+            return 1;
+        }
+        for (iteration = 0; iteration < 3; ++iteration) {
+            if (index_caller_owned_peaks(crystal, -1) || index_caller_owned_peaks(crystal, 7)) {
+                laue_crystal_free(crystal);
+                return 1;
+            }
+        }
+        laue_crystal_free(crystal);
     }
 
     return 0;

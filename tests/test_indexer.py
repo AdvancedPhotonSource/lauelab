@@ -140,8 +140,14 @@ def test_fractional_min_size_matches_lauego_peaksearch(tmp_path, min_size, expec
     assert result.n_peaks == len(expected) == expected_peaks
     np.testing.assert_allclose(result.peaks["fit_x"], expected[:, 0], atol=5e-4, rtol=0)
     np.testing.assert_allclose(result.peaks["fit_y"], expected[:, 1], atol=5e-4, rtol=0)
-    np.testing.assert_allclose(result.peaks["hwhm_x"], expected[:, 4], atol=5e-4, rtol=0)
-    np.testing.assert_allclose(result.peaks["hwhm_y"], expected[:, 5], atol=5e-4, rtol=0)
+    # A square plateau is symmetric under a 90 degree rotation, so the fit has two
+    # equivalent answers (widths swapped, tilt + 90) and either build may return
+    # either one. Compare the widths as an unordered pair; ignore tilt.
+    np.testing.assert_allclose(
+        np.sort(np.column_stack([result.peaks["hwhm_x"], result.peaks["hwhm_y"]]), axis=1),
+        np.sort(expected[:, 4:6], axis=1),
+        atol=5e-4, rtol=0,
+    )
 
 
 def test_max_peaks_is_an_exact_cap():

@@ -18,7 +18,8 @@ from ._frame import ScanFrame, load_mask
 from .incremental import EXPECTED_INPUT_ERRORS, FrameInput, FrameOutcome, FrameOutcomes
 from .index import IndexingResult, lauego
 from .indexer import (
-    FrameMetadata, FrameResult, Indexer, IndexParams, Pattern, PeakParams, index_frame,
+    FrameMetadata, FrameResult, Indexer, IndexParams, Pattern, PeakParams, PeakSearch,
+    index_frame, index_orientations, peak_search,
 )
 from .results import ResultsFileSummary, ResultsWriter, validate_results_file
 from .xml_utils import XmlResultsWriter
@@ -27,6 +28,9 @@ __all__ = [
     'lauego',
     'IndexingResult',
     'index_frame',
+    'peak_search',
+    'index_orientations',
+    'PeakSearch',
     'Indexer',
     'Cell',
     'Atom',

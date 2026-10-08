@@ -20,6 +20,21 @@ The preferred API either indexes one frame with `index_frame` or reuses an
    :members: index, index_many, iter_index, replace, results_writer, write_results, write_many_xml
 ```
 
+## Individual stages
+
+```{eval-rst}
+.. currentmodule:: lauelab.indexing
+
+.. autofunction:: peak_search
+
+.. autoclass:: PeakSearch
+   :members: n_peaks
+
+.. autofunction:: index_orientations
+```
+
+Use {meth}`Geometry.pixels_to_q <lauelab.indexing.Geometry.pixels_to_q>` for pixel-to-q conversion; see the [Geometry reference](geometry.md) for details. For a worked example of all three stages, see [Run the indexing stages separately](../guides/stages.md).
+
 ## Parallel Indexing
 
 ```{eval-rst}

@@ -9,6 +9,7 @@ geometry
 crystals
 frame-input
 parameters
+stages
 results
 results-file
 batch-indexing
@@ -20,4 +21,4 @@ detector-simulation
 error-handling
 ```
 
-Read [Geometry](geometry.md), [Crystals](crystals.md), and [Frame input](frame-input.md) when preparing a new experiment. Use [Parameters](parameters.md) after the default processing behavior is understood. [Results](results.md) defines the returned arrays and their relationships, and [Results files](results-file.md) covers the HDF5 output that stores a whole run. [Reconstruct a wire scan](reconstruction.md) covers depth-resolved reconstruction of wire-scan points, and [Inspect a reconstructed point](depth-inspection.md) covers reference images, square ROIs, and intensity through depth. [Simulation](simulation.md), [detector-view simulation](detector-simulation.md), and [Visualization data](visualization.md) cover scientific analysis and plotting.
+Read [Geometry](geometry.md), [Crystals](crystals.md), and [Frame input](frame-input.md) when preparing a new experiment. Use [Parameters](parameters.md) after the default processing behavior is understood. To compare settings or investigate results at each stage, see [Run the indexing stages separately](stages.md). [Results](results.md) defines the returned arrays and their relationships, and [Results files](results-file.md) covers the HDF5 output that stores a whole run. [Reconstruct a wire scan](reconstruction.md) covers depth-resolved reconstruction of wire-scan points, and [Inspect a reconstructed point](depth-inspection.md) covers reference images, square ROIs, and intensity through depth. [Simulation](simulation.md), [detector-view simulation](detector-simulation.md), and [Visualization data](visualization.md) cover scientific analysis and plotting.

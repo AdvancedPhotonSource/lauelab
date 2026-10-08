@@ -78,6 +78,11 @@ PEAK_DTYPE = np.dtype([
     ("qhat", np.float64, (3,)),
 ])
 
+# Fields of PeakSearch.peaks: PEAK_DTYPE without qhat, because computing qhat requires the geometry.
+PEAK_SEARCH_DTYPE = np.dtype([
+    (name, PEAK_DTYPE.fields[name][0]) for name in PEAK_DTYPE.names if name != "qhat"
+])
+
 
 @dataclass(frozen=True)
 class PeakParams:
@@ -488,6 +493,239 @@ class FrameResult:
         write_step_xml(self.to_step(), str(path))
 
 
+@dataclass(frozen=True)
+class PeakSearch:
+    """Peaks and frame statistics from :func:`peak_search`.
+
+    Parameters
+    ----------
+    peaks
+        Structured peak array with shape ``(n,)``. The fields are those of
+        ``FrameResult.peaks`` except ``qhat``: ``fit_x``, ``fit_y``,
+        ``intens``, ``integral``, ``hwhm_x``, ``hwhm_y``, ``tilt``,
+        ``chisq``, and ``background``. ``fit_x`` and ``fit_y`` are zero-based
+        frame pixel coordinates of the searched image. The peaks are sorted by
+        the maximum pixel value in the blob used for each fit, largest first.
+    params
+        The validated peak-search configuration, including defaults. Pass it
+        as ``peak_params`` to :class:`Indexer` to index a scan with the same
+        settings.
+    threshold_used
+        Intensity threshold used by peak search. This is ``NaN`` when the
+        threshold is automatic and the image has no unmasked nonzero pixels.
+    threshold_ratio
+        Ratio used to calculate the automatic threshold. This is ``NaN``
+        when an absolute threshold is set.
+    total_sum
+        Sum of unmasked raw image pixel values.
+    sum_above_threshold
+        Sum of pixel values above ``threshold_used``.
+    num_above_threshold
+        Number of pixels above ``threshold_used``.
+    peak_minwidth, peak_maxwidth, peak_max_cent_to_fit, peak_boxsize
+        Effective fitting parameters configured by the native peak search.
+    seconds
+        Elapsed native peak-search time in seconds.
+
+    Notes
+    -----
+    Fields shared with :class:`FrameResult` have the same meaning.
+    """
+
+    peaks: np.ndarray
+    params: PeakParams
+    threshold_used: float
+    threshold_ratio: float
+    total_sum: float
+    sum_above_threshold: float
+    num_above_threshold: int
+    peak_minwidth: float
+    peak_maxwidth: float
+    peak_max_cent_to_fit: float
+    peak_boxsize: int
+    seconds: float
+
+    def __repr__(self) -> str:
+        return f"PeakSearch(n_peaks={self.n_peaks}, threshold_used={self.threshold_used:.6g})"
+
+    @property
+    def n_peaks(self) -> int:
+        """Number of detected peaks."""
+        return len(self.peaks)
+
+
+def _validate_peak_params(peak: PeakParams) -> PeakParams:
+    counts = {
+        name: _whole_number(getattr(peak, name), name)
+        for name in ("boxsize", "min_separation")
+    }
+    if peak.max_peaks is not None:
+        counts["max_peaks"] = _whole_number(peak.max_peaks, "max_peaks")
+    if min(counts.values()) < 1:
+        raise InputError(
+            "peak sizes, separation, and max_peaks must be positive "
+            "(max_peaks may be None for no limit)"
+        )
+    min_size = peak.min_size
+    if (
+        isinstance(min_size, (bool, np.bool_))
+        or not isinstance(min_size, Real)
+        or not 0 < min_size <= np.iinfo(np.int32).max
+    ):
+        raise InputError(
+            f"min_size must be a positive number of pixels; received {min_size!r}"
+        )
+    if peak.max_rfactor <= 0:
+        raise InputError("max_rfactor must be positive")
+    if peak.threshold_ratio is not None and peak.threshold_ratio <= 0:
+        raise InputError("threshold_ratio must be positive or None")
+    if peak.peak_shape not in {"Lorentzian", "Gaussian"}:
+        raise InputError("peak_shape must be 'Lorentzian' or 'Gaussian'")
+    return replace(peak, **counts, min_size=float(min_size))
+
+
+def _validate_index_params(indexing: IndexParams) -> IndexParams:
+    if min(indexing.kev_max_calc, indexing.kev_max_test, indexing.angle_tolerance_deg, indexing.cone_deg) <= 0:
+        raise InputError("indexing energy and angle parameters must be positive")
+    if len(indexing.hkl_prefer) != 3:
+        raise InputError("hkl_prefer must contain exactly three integers")
+    hkl_prefer = tuple(_whole_number(value, "hkl_prefer") for value in indexing.hkl_prefer)
+    max_data = _whole_number(indexing.max_data, "max_data")
+    if max_data < 2:
+        raise InputError("max_data must be at least 2")
+    return replace(indexing, hkl_prefer=hkl_prefer, max_data=max_data)
+
+
+def _frame_pixels(source: np.ndarray) -> tuple[np.ndarray, str]:
+    """Return a contiguous native-order frame and the name of its native pixel type."""
+    if source.dtype.byteorder == ">":
+        source = source.astype(source.dtype.newbyteorder("="))
+    pixel_type_name = _PIXEL_TYPE_NAMES.get(source.dtype.name)
+    if source.ndim != 2 or pixel_type_name is None:
+        supported = ", ".join(dtype.name for dtype in SUPPORTED_FRAME_DTYPES)
+        raise InputError(
+            f"frame must be a 2D array with dtype in ({supported}); "
+            f"received shape={source.shape}, dtype={source.dtype}"
+        )
+    if source.dtype.kind == "f" and not np.isfinite(source).all():
+        raise InputError("frame contains non-finite pixel values")
+    return np.ascontiguousarray(source), pixel_type_name
+
+
+def _peak_search(
+    image: np.ndarray, pixel_type_name: str, params: PeakParams, mask: np.ndarray | None
+) -> PeakSearch:
+    """Run native peak search on a frame from :func:`_frame_pixels` with validated params."""
+    mask_buffer = None
+    mask_pointer = ffi.NULL
+    if mask is not None:
+        mask_buffer = np.ascontiguousarray(np.asarray(mask) != 0, dtype=np.uint8)
+        if mask_buffer.shape != image.shape:
+            raise InputError(f"mask shape {mask_buffer.shape} does not match frame shape {image.shape}")
+        mask_pointer = ffi.from_buffer("unsigned char[]", mask_buffer)
+
+    threshold_ratio = 4.0 if params.threshold_ratio is None else params.threshold_ratio
+    native = ffi.new("laue_peak_params *")
+    native.boxsize = params.boxsize
+    native.max_rfactor = params.max_rfactor
+    native.min_size = params.min_size
+    native.min_separation = params.min_separation
+    native.threshold = np.nan if params.threshold is None else params.threshold
+    native.threshold_ratio = threshold_ratio
+    native.peak_shape = 1 if params.peak_shape == "Gaussian" else 0
+    # Native convention: 0 means no limit.
+    native.max_peaks = 0 if params.max_peaks is None else params.max_peaks
+    native.smooth = params.smooth
+    native.mask = mask_pointer
+
+    library = get_library()
+    result = ffi.new("laue_frame_result *")
+    pixels = ffi.from_buffer(image)
+    started = perf_counter()
+    status = library.laue_find_peaks_typed(
+        pixels, getattr(library, pixel_type_name), image.shape[1], image.shape[0], native, result
+    )
+    seconds = perf_counter() - started
+    try:
+        if status:
+            _raise_native_error(status, "peak search", ffi.string(result.message).decode(errors="replace"))
+        peaks = np.empty(result.n_peaks, dtype=PEAK_SEARCH_DTYPE)
+        for index in range(result.n_peaks):
+            peak = result.peaks[index]
+            peaks[index] = (
+                peak.fit_x, peak.fit_y, peak.intens, peak.integral,
+                peak.hwhm_x, peak.hwhm_y, peak.tilt, peak.chisq, peak.background,
+            )
+        return PeakSearch(
+            peaks=peaks,
+            params=params,
+            threshold_used=result.threshold_used,
+            threshold_ratio=threshold_ratio if params.threshold is None else np.nan,
+            total_sum=result.total_sum,
+            sum_above_threshold=result.sum_above_threshold,
+            num_above_threshold=result.num_above_threshold,
+            peak_minwidth=result.peak_minwidth,
+            peak_maxwidth=result.peak_maxwidth,
+            peak_max_cent_to_fit=result.peak_max_cent_to_fit,
+            peak_boxsize=result.peak_boxsize,
+            seconds=seconds,
+        )
+    finally:
+        library.laue_frame_result_free(result)
+
+
+def _index_orientations(
+    crystal: NativeCrystal, params: IndexParams, qhat: np.ndarray
+) -> tuple[Pattern, ...]:
+    """Run native orientation indexing on at least two finite ``(n, 3)`` q vectors."""
+    native = ffi.new("laue_index_params *")
+    native.kev_max_calc = params.kev_max_calc
+    native.kev_max_test = params.kev_max_test
+    native.angle_tolerance_deg = params.angle_tolerance_deg
+    native.cone_deg = params.cone_deg
+    for index, value in enumerate(params.hkl_prefer):
+        native.hkl_prefer[index] = value
+    native.max_data = params.max_data
+
+    peaks = ffi.new("laue_peak[]", len(qhat))
+    for index, vector in enumerate(qhat):
+        for axis in range(3):
+            peaks[index].qhat[axis] = vector[axis]
+    library = get_library()
+    result = ffi.new("laue_frame_result *")
+    result.n_peaks = len(qhat)
+    result.peaks = peaks
+    status = library.laue_index(crystal._handle, native, result)
+    # The peak array is allocated by Python. Detach it so that
+    # laue_frame_result_free frees only the patterns.
+    result.peaks = ffi.NULL
+    result.n_peaks = 0
+    try:
+        if status:
+            _raise_native_error(
+                status, "orientation indexing", ffi.string(result.message).decode(errors="replace")
+            )
+        patterns = []
+        for index in range(result.n_patterns):
+            pattern = result.patterns[index]
+            count = pattern.n_indexed
+            patterns.append(Pattern(
+                euler_deg=np.asarray(list(pattern.euler_deg)),
+                rotation=np.asarray([list(row) for row in pattern.rotation]),
+                reciprocal=np.asarray([list(row) for row in pattern.recip]),
+                goodness=pattern.goodness,
+                rms_error_deg=pattern.rms_error_deg,
+                hkl=np.asarray([pattern.hkl[i] for i in range(3 * count)], dtype=np.int32).reshape((-1, 3)),
+                pk_index=np.asarray([pattern.pk_index[i] for i in range(count)], dtype=np.int32),
+                err_deg=np.asarray([pattern.err_deg[i] for i in range(count)]),
+                energy_kev=np.asarray([pattern.energy_kev[i] for i in range(count)]),
+                pred_intens=np.asarray([pattern.pred_intens[i] for i in range(count)]),
+            ))
+        return tuple(patterns)
+    finally:
+        library.laue_frame_result_free(result)
+
+
 def index_frame(
     frame: np.ndarray | str | Path,
     *,
@@ -579,6 +817,152 @@ def index_frame(
     )
 
 
+def peak_search(
+    image: np.ndarray,
+    *,
+    boxsize: int = 5,
+    max_rfactor: float = 2.0,
+    min_size: float = 3.0,
+    min_separation: int = 10,
+    threshold: float | None = 100.0,
+    threshold_ratio: float | None = None,
+    peak_shape: Literal["Lorentzian", "Gaussian"] = "Lorentzian",
+    max_peaks: int | None = 50,
+    smooth: bool = False,
+    mask: np.ndarray | None = None,
+) -> PeakSearch:
+    """Find and fit peaks in one image, the first stage of indexing.
+
+    This function uses the same native code as :meth:`Indexer.index` and returns
+    the same peaks for the same image, mask, and settings. No geometry or crystal
+    description is needed, so you can compare peak-search settings before
+    running the later stages.
+
+    Parameters
+    ----------
+    image
+        Two-dimensional NumPy array with a dtype in
+        :data:`~lauelab.indexing.indexer.SUPPORTED_FRAME_DTYPES`. Peak search
+        converts each pixel value exactly to ``float64``. To search a frame
+        that is stored in a file, use the ``image`` of a :class:`FrameResult`
+        or read the array with ``h5py``.
+    boxsize, max_rfactor, min_size, min_separation, threshold, threshold_ratio, peak_shape, max_peaks, smooth
+        Peak-search settings with the names, defaults, units, and validation
+        of the :class:`PeakParams` fields.
+    mask
+        Array with the same shape as ``image``. Peak search excludes the
+        pixels where the mask is nonzero.
+
+    Returns
+    -------
+    PeakSearch
+        The fitted peaks in frame pixel coordinates, the frame statistics,
+        and the validated settings in ``params``.
+
+    Raises
+    ------
+    InputError
+        If a setting, the image, or the mask is invalid.
+    MemoryError
+        If native peak search cannot allocate required memory.
+    IndexingError
+        If native peak search fails numerically or internally.
+
+    Notes
+    -----
+    Convert the peaks to scattering vectors with
+    :meth:`Geometry.pixels_to_q`, which accepts ``PeakSearch.peaks``
+    directly, then pass the vectors to :func:`index_orientations`.
+    """
+    params = _validate_peak_params(PeakParams(
+        boxsize=boxsize, max_rfactor=max_rfactor, min_size=min_size,
+        min_separation=min_separation, threshold=threshold,
+        threshold_ratio=threshold_ratio, peak_shape=peak_shape,
+        max_peaks=max_peaks, smooth=smooth,
+    ))
+    image, pixel_type_name = _frame_pixels(np.asarray(image))
+    return _peak_search(image, pixel_type_name, params, mask)
+
+
+def index_orientations(
+    qhat: np.ndarray,
+    crystal: str | Path | Crystal,
+    *,
+    kev_max_calc: float = 30.0,
+    kev_max_test: float = 35.0,
+    angle_tolerance_deg: float = 0.12,
+    cone_deg: float = 72.0,
+    hkl_prefer: tuple[int, int, int] = (0, 0, 1),
+    max_data: int = 250,
+) -> tuple[Pattern, ...]:
+    """Find crystal orientations that fit scattering vectors, the last stage of indexing.
+
+    This function uses the same native code as :meth:`Indexer.index` and returns
+    the same patterns for the same scattering vectors, crystal, and settings. You can
+    compare indexing settings or select a subset of peaks without repeating
+    peak search or pixel-to-q conversion.
+
+    Parameters
+    ----------
+    qhat
+        Scattering vectors with shape ``(n, 3)`` in the 34-ID-E laboratory
+        frame, such as the result of :meth:`Geometry.pixels_to_q` or the
+        ``qhat`` field of ``FrameResult.peaks``. Each row is normalized
+        before use.
+    crystal
+        Crystal description or crystal XML path.
+    kev_max_calc, kev_max_test, angle_tolerance_deg, cone_deg, hkl_prefer, max_data
+        Indexing settings with the names, defaults, units, and validation of
+        the :class:`IndexParams` fields.
+
+    Returns
+    -------
+    tuple[Pattern, ...]
+        A tuple of the orientations found, or an empty tuple if none are found.
+        ``Pattern.pk_index`` contains zero-based row indices into ``qhat``.
+
+    Raises
+    ------
+    InputError
+        If a setting or the crystal is invalid, or ``qhat`` does not have
+        shape ``(n, 3)``, contains a non-finite value, or contains a zero
+        vector among the rows used.
+    MemoryError
+        If native crystal indexing cannot allocate required memory.
+    IndexingError
+        If native crystal indexing fails numerically or internally.
+
+    Notes
+    -----
+    The row order is significant. This function uses only the first
+    ``max_data`` rows. :func:`peak_search` sorts its peaks by the maximum
+    pixel value of each blob, largest first, so if ``qhat`` is computed from
+    all of those peaks in order, the peaks with the brightest blobs are
+    indexed. If ``qhat`` has fewer than two rows, this function returns an
+    empty tuple, as :meth:`Indexer.index` does.
+    """
+    params = _validate_index_params(IndexParams(
+        kev_max_calc=kev_max_calc, kev_max_test=kev_max_test,
+        angle_tolerance_deg=angle_tolerance_deg, cone_deg=cone_deg,
+        hkl_prefer=hkl_prefer, max_data=max_data,
+    ))
+    if isinstance(crystal, (str, Path)):
+        crystal = load_crystal(crystal)
+    if not isinstance(crystal, Crystal):
+        raise InputError(f"crystal must be a Crystal or a crystal file path; received {crystal!r}")
+    try:
+        vectors = np.asarray(qhat, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise InputError(f"qhat must be a numeric array with shape (n, 3): {error}") from error
+    if vectors.ndim != 2 or vectors.shape[1] != 3:
+        raise InputError(f"qhat must have shape (n, 3); received shape {vectors.shape}")
+    if not np.isfinite(vectors).all():
+        raise InputError("qhat contains non-finite values")
+    if len(vectors) < 2:
+        return ()
+    return _index_orientations(NativeCrystal.create(crystal), params, vectors)
+
+
 class Indexer:
     """Reusable in-process Laue frame indexer.
 
@@ -646,9 +1030,8 @@ class Indexer:
         self.geometry = geometry if isinstance(geometry, Geometry) else Geometry(self.geometry_path)
         self.crystal = load_crystal(crystal) if isinstance(crystal, (str, Path)) else crystal
         self._crystal = NativeCrystal.create(self.crystal) if self.crystal is not None else None
-        self.peak_params, self.index_params = self._validate_params(
-            peak_params or PeakParams(), index_params or IndexParams()
-        )
+        self.peak_params = _validate_peak_params(peak_params or PeakParams())
+        self.index_params = _validate_index_params(index_params or IndexParams())
         if detector_id is not None:
             detector_index = self.geometry.find_detector(detector_id)
             if detector_index < 0:
@@ -667,49 +1050,6 @@ class Indexer:
         return (
             f"Indexer(detector_id={self.detector_id!r}, detector_index={self.detector_index}, "
             f"crystal={crystal}, smooth={self.peak_params.smooth})"
-        )
-
-    @staticmethod
-    def _validate_params(
-        peak: PeakParams, indexing: IndexParams
-    ) -> tuple[PeakParams, IndexParams]:
-        counts = {
-            name: _whole_number(getattr(peak, name), name)
-            for name in ("boxsize", "min_separation")
-        }
-        if peak.max_peaks is not None:
-            counts["max_peaks"] = _whole_number(peak.max_peaks, "max_peaks")
-        if min(counts.values()) < 1:
-            raise InputError(
-                "peak sizes, separation, and max_peaks must be positive "
-                "(max_peaks may be None for no limit)"
-            )
-        min_size = peak.min_size
-        if (
-            isinstance(min_size, (bool, np.bool_))
-            or not isinstance(min_size, Real)
-            or not 0 < min_size <= np.iinfo(np.int32).max
-        ):
-            raise InputError(
-                f"min_size must be a positive number of pixels; received {min_size!r}"
-            )
-        if peak.max_rfactor <= 0:
-            raise InputError("max_rfactor must be positive")
-        if peak.threshold_ratio is not None and peak.threshold_ratio <= 0:
-            raise InputError("threshold_ratio must be positive or None")
-        if peak.peak_shape not in {"Lorentzian", "Gaussian"}:
-            raise InputError("peak_shape must be 'Lorentzian' or 'Gaussian'")
-        if min(indexing.kev_max_calc, indexing.kev_max_test, indexing.angle_tolerance_deg, indexing.cone_deg) <= 0:
-            raise InputError("indexing energy and angle parameters must be positive")
-        if len(indexing.hkl_prefer) != 3:
-            raise InputError("hkl_prefer must contain exactly three integers")
-        hkl_prefer = tuple(_whole_number(value, "hkl_prefer") for value in indexing.hkl_prefer)
-        max_data = _whole_number(indexing.max_data, "max_data")
-        if max_data < 2:
-            raise InputError("max_data must be at least 2")
-        return (
-            replace(peak, **counts, min_size=float(min_size)),
-            replace(indexing, hkl_prefer=hkl_prefer, max_data=max_data),
         )
 
     def index(
@@ -820,18 +1160,7 @@ class Indexer:
                 depth = file_processing.get("depth")
         else:
             source = np.asarray(frame)
-        if source.dtype.byteorder == ">":
-            source = source.astype(source.dtype.newbyteorder("="))
-        pixel_type_name = _PIXEL_TYPE_NAMES.get(source.dtype.name)
-        if source.ndim != 2 or pixel_type_name is None:
-            supported = ", ".join(dtype.name for dtype in SUPPORTED_FRAME_DTYPES)
-            raise InputError(
-                f"frame must be a 2D array with dtype in ({supported}); "
-                f"received shape={source.shape}, dtype={source.dtype}"
-            )
-        if source.dtype.kind == "f" and not np.isfinite(source).all():
-            raise InputError("frame contains non-finite pixel values")
-        image = np.ascontiguousarray(source)
+        image, pixel_type_name = _frame_pixels(source)
         if (
             len(start) != 2
             or len(group) != 2
@@ -857,129 +1186,49 @@ class Indexer:
         if depth is not None and not np.isfinite(depth):
             raise InputError("depth must be finite when provided")
 
-        mask_buffer = None
-        mask_pointer = ffi.NULL
-        if mask is not None:
-            mask_buffer = np.ascontiguousarray(np.asarray(mask) != 0, dtype=np.uint8)
-            if mask_buffer.shape != image.shape:
-                raise InputError(f"mask shape {mask_buffer.shape} does not match frame shape {image.shape}")
-            mask_pointer = ffi.from_buffer("unsigned char[]", mask_buffer)
-
-        threshold_ratio = (
-            4.0 if self.peak_params.threshold_ratio is None else self.peak_params.threshold_ratio
+        search = _peak_search(image, pixel_type_name, self.peak_params, mask)
+        qhat, status, message = self.geometry._pixels_to_q(
+            np.column_stack([search.peaks["fit_x"], search.peaks["fit_y"]]),
+            self.detector_index, start, group, depth,
         )
-        recorded_threshold_ratio = (
-            threshold_ratio if self.peak_params.threshold is None else np.nan
-        )
-        params = ffi.new("laue_peak_params *")
-        params.boxsize = self.peak_params.boxsize
-        params.max_rfactor = self.peak_params.max_rfactor
-        params.min_size = self.peak_params.min_size
-        params.min_separation = self.peak_params.min_separation
-        params.threshold = np.nan if self.peak_params.threshold is None else self.peak_params.threshold
-        params.threshold_ratio = threshold_ratio
-        params.peak_shape = 1 if self.peak_params.peak_shape == "Gaussian" else 0
-        # Native convention: 0 means no limit.
-        params.max_peaks = 0 if self.peak_params.max_peaks is None else self.peak_params.max_peaks
-        params.smooth = self.peak_params.smooth
-        params.mask = mask_pointer
-
-        library = get_library()
-        result = ffi.new("laue_frame_result *")
-        pixels = ffi.from_buffer(image)
-        peaksearch_started = perf_counter()
-        status = library.laue_find_peaks_typed(
-            pixels, getattr(library, pixel_type_name), image.shape[1], image.shape[0], params, result
-        )
-        peaksearch_seconds = perf_counter() - peaksearch_started
         if status:
-            message = ffi.string(result.message).decode(errors="replace")
-            library.laue_frame_result_free(result)
-            _raise_native_error(status, "peak search", message)
+            _raise_native_error(status, "pixel-to-q conversion", message)
 
-        try:
-            result.startx, result.starty = start
-            result.groupx, result.groupy = group
-            result.depth = np.nan if depth is None else depth
-            status = library.laue_pixels_to_q(self.geometry._handle, self.detector_index, result)
-            if status:
-                _raise_native_error(
-                    status,
-                    "pixel-to-q conversion",
-                    ffi.string(result.message).decode(errors="replace"),
-                )
+        indexing_started = perf_counter()
+        patterns = ()
+        if self._crystal is not None and search.n_peaks > 1:
+            patterns = _index_orientations(self._crystal, self.index_params, qhat)
+        indexing_seconds = perf_counter() - indexing_started
 
-            indexing_started = perf_counter()
-            if self._crystal is not None and result.n_peaks > 1:
-                index_params = ffi.new("laue_index_params *")
-                index_params.kev_max_calc = self.index_params.kev_max_calc
-                index_params.kev_max_test = self.index_params.kev_max_test
-                index_params.angle_tolerance_deg = self.index_params.angle_tolerance_deg
-                index_params.cone_deg = self.index_params.cone_deg
-                for index, value in enumerate(self.index_params.hkl_prefer):
-                    index_params.hkl_prefer[index] = value
-                index_params.max_data = self.index_params.max_data
-                status = library.laue_index(self._crystal._handle, index_params, result)
-                if status:
-                    _raise_native_error(
-                        status,
-                        "orientation indexing",
-                        ffi.string(result.message).decode(errors="replace"),
-                    )
-
-            indexing_seconds = perf_counter() - indexing_started
-
-            peaks = np.empty(result.n_peaks, dtype=PEAK_DTYPE)
-            for index in range(result.n_peaks):
-                peak = result.peaks[index]
-                peaks[index] = (
-                    peak.fit_x, peak.fit_y, peak.intens, peak.integral,
-                    peak.hwhm_x, peak.hwhm_y, peak.tilt, peak.chisq,
-                    peak.background, tuple(peak.qhat),
-                )
-            patterns = []
-            for index in range(result.n_patterns):
-                pattern = result.patterns[index]
-                count = pattern.n_indexed
-                patterns.append(Pattern(
-                    euler_deg=np.asarray(list(pattern.euler_deg)),
-                    rotation=np.asarray([list(row) for row in pattern.rotation]),
-                    reciprocal=np.asarray([list(row) for row in pattern.recip]),
-                    goodness=pattern.goodness,
-                    rms_error_deg=pattern.rms_error_deg,
-                    hkl=np.asarray([pattern.hkl[i] for i in range(3 * count)], dtype=np.int32).reshape((-1, 3)),
-                    pk_index=np.asarray([pattern.pk_index[i] for i in range(count)], dtype=np.int32),
-                    err_deg=np.asarray([pattern.err_deg[i] for i in range(count)]),
-                    energy_kev=np.asarray([pattern.energy_kev[i] for i in range(count)]),
-                    pred_intens=np.asarray([pattern.pred_intens[i] for i in range(count)]),
-                ))
-            frame_result = FrameResult(
-                peaks=peaks,
-                patterns=tuple(patterns),
-                threshold_used=result.threshold_used,
-                threshold_ratio=recorded_threshold_ratio,
-                total_sum=result.total_sum,
-                sum_above_threshold=result.sum_above_threshold,
-                num_above_threshold=result.num_above_threshold,
-                peak_minwidth=result.peak_minwidth,
-                peak_maxwidth=result.peak_maxwidth,
-                peak_max_cent_to_fit=result.peak_max_cent_to_fit,
-                peak_boxsize=result.peak_boxsize,
-                peaksearch_seconds=peaksearch_seconds,
-                indexing_seconds=indexing_seconds,
-                metadata=supplied_metadata,
-                input_image=input_image,
-                source=scan_frame,
-                image_shape=image.shape,
-                start=start,
-                group=group,
-                depth=depth,
-                image=image if keep_image else None,
-            )
-            object.__setattr__(frame_result, "_step", self._to_step(frame_result))
-            return frame_result
-        finally:
-            library.laue_frame_result_free(result)
+        peaks = np.empty(search.n_peaks, dtype=PEAK_DTYPE)
+        for name in PEAK_SEARCH_DTYPE.names:
+            peaks[name] = search.peaks[name]
+        peaks["qhat"] = qhat
+        frame_result = FrameResult(
+            peaks=peaks,
+            patterns=patterns,
+            threshold_used=search.threshold_used,
+            threshold_ratio=search.threshold_ratio,
+            total_sum=search.total_sum,
+            sum_above_threshold=search.sum_above_threshold,
+            num_above_threshold=search.num_above_threshold,
+            peak_minwidth=search.peak_minwidth,
+            peak_maxwidth=search.peak_maxwidth,
+            peak_max_cent_to_fit=search.peak_max_cent_to_fit,
+            peak_boxsize=search.peak_boxsize,
+            peaksearch_seconds=search.seconds,
+            indexing_seconds=indexing_seconds,
+            metadata=supplied_metadata,
+            input_image=input_image,
+            source=scan_frame,
+            image_shape=image.shape,
+            start=start,
+            group=group,
+            depth=depth,
+            image=image if keep_image else None,
+        )
+        object.__setattr__(frame_result, "_step", self._to_step(frame_result))
+        return frame_result
 
     def index_many(
         self, frames: Iterable[np.ndarray | str | Path], *, keep_images: bool = False
