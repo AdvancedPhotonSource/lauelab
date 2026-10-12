@@ -69,7 +69,7 @@ The reciprocal basis follows the native `setDirectRecip` convention. Its direct 
 
 Before constructing this basis, the native crystal model forces ideal metric constraints from the space group: cubic forces equal lengths and right angles; hexagonal forces `a = b`, `alpha = beta = 90 deg`, and `gamma = 120 deg`; tetragonal forces `a = b` and right angles; orthorhombic forces right angles; and monoclinic forces `alpha = gamma = 90 deg`. Trigonal cells use hexagonal axes when the supplied angles are already `90, 90, 120 deg` within native tolerance; otherwise they use a rhombohedral cell with equal lengths and angles.
 
-This convention also defines rotations reconstructed while loading XML. Compared with releases that used the JZT reference basis, XML-derived orientations for non-orthogonal cells change by the fixed rotation between those bases, including 30 degrees about `c` for hexagonal cells. Native live results and newly loaded XML now use the same basis. Prefer the full rotation matrix when exchanging orientations with other software, and confirm that software's basis convention.
+Rotations reconstructed while loading XML use the same basis as native results. For a non-orthogonal cell, they differ from an orientation in the JZT reference basis by the fixed rotation between the two bases, which is 30 degrees about `c` for a hexagonal cell. Prefer the full rotation matrix when exchanging orientations with other software, and confirm that software's basis convention.
 
 ## Indexed and unindexed peaks
 

@@ -136,16 +136,6 @@ def _read_scan_info(source, normalization, read_intensity_map, frame_skip, wire_
         raise InputError(f"input images must have a numeric dtype, not {data.dtype}")
 
     rows, cols = data.shape[1:]
-    nx = int(_scalar(source, "entry1/detector/Nx", cols))
-    ny = int(_scalar(source, "entry1/detector/Ny", rows))
-    start = (
-        int(_scalar(source, "entry1/detector/startx", 0)),
-        int(_scalar(source, "entry1/detector/starty", 0)),
-    )
-    group = (
-        int(_scalar(source, "entry1/detector/binx", 1)),
-        int(_scalar(source, "entry1/detector/biny", 1)),
-    )
 
     # Slice frame_skip is the intensity map and first scan frame; the
     # executable reads but never differences the final stored slice. Like the
@@ -176,12 +166,10 @@ def _read_scan_info(source, normalization, read_intensity_map, frame_skip, wire_
         divisor = {"mA": 102.0, "cnt3": 88100.0}.get(normalization, 1.0)
         scale = np.ascontiguousarray(values / divisor)
 
-    sample = tuple(float(_scalar(source, f"entry1/sample/sample{name}", np.nan)) for name in "XYZ")
-    scan_number = _scalar(source, "entry1/scanNum")
     file_time = _text(source.attrs.get("file_time"))
-    energy = _scalar(source, "entry1/sample/incident_energy")
+    scan_number, sample, energy = read_acquisition(source)
     return ScanInfo(
-        image_geometry=ImageGeometry(nx, ny, start, group, rows, cols),
+        image_geometry=read_image_geometry(source, rows, cols),
         shape=(n_images, rows, cols),
         dtype=data.dtype,
         intensity_map=np.asarray(data[frame_skip], dtype=np.float64) if read_intensity_map else None,
@@ -189,10 +177,43 @@ def _read_scan_info(source, normalization, read_intensity_map, frame_skip, wire_
         positioner=positioner_from_file_time(file_time),
         file_time=file_time,
         scale=scale,
-        scan_number=None if scan_number is None else int(scan_number),
+        scan_number=scan_number,
         sample_position=sample,
-        energy_kev=None if energy is None else float(energy),
+        energy_kev=energy,
     )
+
+
+def read_image_geometry(source: h5py.File, rows: int, cols: int) -> ImageGeometry:
+    """Read the detector ROI of ``rows`` by ``cols`` frames from ``entry1/detector``.
+
+    A missing size is the frame size, a missing origin is ``(0, 0)``, and a
+    missing binning factor is 1. Point files keep these fields from their
+    input, so this rule gives them the geometry their reconstruction used.
+    """
+    nx = int(_scalar(source, "entry1/detector/Nx", cols))
+    ny = int(_scalar(source, "entry1/detector/Ny", rows))
+    start = (
+        int(_scalar(source, "entry1/detector/startx", 0)),
+        int(_scalar(source, "entry1/detector/starty", 0)),
+    )
+    group = (
+        int(_scalar(source, "entry1/detector/binx", 1)),
+        int(_scalar(source, "entry1/detector/biny", 1)),
+    )
+    return ImageGeometry(nx, ny, start, group, rows, cols)
+
+
+def read_acquisition(source: h5py.File) -> tuple[int | None, tuple[float, float, float], float | None]:
+    """Return the scan number, sample ``(x, y, z)`` in µm, and energy in keV.
+
+    A missing scan number is ``None``, as is a missing or non-finite energy; a
+    missing sample coordinate is NaN.
+    """
+    sample = tuple(float(_scalar(source, f"entry1/sample/sample{name}", np.nan)) for name in "XYZ")
+    scan_number = _scalar(source, "entry1/scanNum")
+    energy = float(_scalar(source, "entry1/sample/incident_energy", np.nan))
+    return (None if scan_number is None else int(scan_number), sample,
+            energy if np.isfinite(energy) else None)
 
 
 def cutoff_mask(intensity_map: np.ndarray, percent_brightest: float) -> np.ndarray:

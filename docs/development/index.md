@@ -122,7 +122,7 @@ The workflow does not publish or keep build artifacts.
 
 Indexing results and reconstructed point files use shared conventions for root attributes, versioning, units, and ragged data. These also apply to scan catalogs. See [HDF5 file conventions](hdf5-conventions.md).
 
-See [Reconstruction scan format](reconstruction-scan-format.md) for the scan catalog and point-file layouts, preparation and coordination, frame selection, stored values, and ROI definitions.
+See [Reconstruction scan format](reconstruction-scan-format.md) for the scan catalog and point-file layouts and stored values, and [Reconstruction scan protocol](reconstruction-scan-protocol.md) for preparation, coordination, statuses, and readers. [Inspect a reconstructed point](../guides/depth-inspection.md) defines ROIs.
 
 ```{toctree}
 :hidden:
@@ -130,4 +130,5 @@ See [Reconstruction scan format](reconstruction-scan-format.md) for the scan cat
 
 hdf5-conventions
 reconstruction-scan-format
+reconstruction-scan-protocol
 ```

@@ -30,8 +30,8 @@ from lauelab.indexing.errors import InputError, InvalidScanFile, LaueError, Reco
 
 from . import _scan_layout as layout
 from ._scan_layout import PointStatus, RunStatus
-from ._scan_reader import _metadata_equal, validate_point
-from ._scan_writer import (COMPRESSION, PointSink, _missing, native_version, settings_values,
+from ._scan_reader import PointReader, _metadata_equal
+from ._scan_writer import (COMPRESSION, PointSink, _missing, native_version, parameter_values,
                            write_catalog, write_point_metadata)
 from ._writer import PIXEL_DTYPES, _copy_metadata
 from .reconstructor import Reconstructor, physical_core_count
@@ -49,6 +49,13 @@ SETTING_NAMES = (
     "depth_range", "resolution", "wire_edge", "percent_brightest", "normalization",
     "norm_exponent", "norm_threshold", "cosmic_filter", "frame_skip", "wire_skip",
     "output_pixel_type", "rows_per_stripe", "memory_limit_mb",
+)
+
+# Settings that a point file contains as given. The others can be chosen
+# automatically, and the point file contains the value chosen.
+RECORDED_SETTINGS = (
+    "depth_range", "resolution", "wire_edge", "percent_brightest", "normalization",
+    "norm_exponent", "cosmic_filter", "frame_skip", "wire_skip", "memory_limit_mb",
 )
 
 
@@ -220,13 +227,22 @@ def _check_compression(compression) -> None:
         raise InputError(f"compression must be None or 'gzip'; received {compression!r}")
 
 
+def _check_raw_input(file: h5py.File) -> None:
+    """Reject an input that already contains reconstruction output."""
+    for path in layout.RESERVED_INPUT_PATHS:
+        if path in file:
+            raise InputError(
+                f"input contains {path}, which reconstruction writes; reconstruct the raw "
+                f"scan file instead"
+            )
+
+
 def _inspect(source: Path, reconstructor: Reconstructor) -> dict:
     """Read the metadata of one input; raise an expected error if it is unusable."""
     if not source.is_file():
         raise InputError(f"input file does not exist: {source}")
     with h5py.File(source, "r") as file:
-        if "entry1/reconstruction" in file:
-            raise InputError("input contains reserved group /entry1/reconstruction")
+        _check_raw_input(file)
         info = reconstructor._scan_info(file, intensity_map=False)
     if info.scan_number is not None and not 0 <= info.scan_number <= np.iinfo(np.int32).max:
         raise InputError(f"invalid metadata in {source}: scan number {info.scan_number} "
@@ -247,8 +263,7 @@ def _input_description(info, depth_um, reconstructor) -> dict:
         "scan_number": info.scan_number,
         "sample_position": tuple(None if np.isnan(value) else value
                                  for value in info.sample_position),
-        "energy_kev": (None if info.energy_kev is None or np.isnan(info.energy_kev)
-                       else info.energy_kev),
+        "energy_kev": info.energy_kev,
     }
 
 
@@ -294,29 +309,26 @@ def _check_unchanged(task: PointTask, info, reconstructor: Reconstructor) -> np.
 
 def _check_point_file(path: Path, task: PointTask) -> None:
     """Check a closed point file against its task without reading pixels."""
-    with h5py.File(path, "r") as file:
-        header = validate_point(file)
-        found = (header.point_id, header.manifest_index, header.shape, header.dtype,
-                 header.depth_bounds_um)
+    with PointReader(path) as point:
+        found = (point.point_id, point.manifest_index, point.shape, point.dtype,
+                 tuple(float(value) for value in point.depth_um[[0, -1]]))
         expected = (task.point_id, task.index, (task.n_depths, *task.image_shape),
                     PIXEL_DTYPES[task.pixel_type], task.depth_bounds_um)
         if found != expected:
             raise InvalidScanFile(f"{path} holds {found}, expected {expected}")
-        expected_metadata = {
-            **{"/entry1/reconstruction" + path: value for path, value in
-               settings_values(task.detector, task.settings, task.geometry_path, task.geometry_xml).items()},
-            "/entry1/reconstruction/acquisition/source_path": task.source,
-            "/entry1/reconstruction/acquisition/scan_number": _missing(task.scan_number, -1),
-            "/entry1/reconstruction/acquisition/sample_position": tuple(_missing(value, np.nan)
-                                                  for value in task.sample_position),
-            "/entry1/reconstruction/acquisition/energy_kev": _missing(task.energy_kev, np.nan),
-            "/entry1/reconstruction/acquisition/raw_slices": task.raw_slices,
+        expected_values = {
+            **{name: task.settings[name] for name in RECORDED_SETTINGS},
+            "normalization": task.settings["normalization"] or None,
+            "detector": task.detector,
+            "geometry_path": task.geometry_path,
+            "geometry_xml": task.geometry_xml,
+            "source_path": task.source,
+            "raw_slices": task.raw_slices,
         }
-        for name, expected_value in expected_metadata.items():
-            value = file[name][()]
-            if isinstance(value, bytes):
-                value = value.decode("utf-8")
-            if not _metadata_equal(value, expected_value):
+        values = {**point.settings, "geometry_xml": point.geometry_xml(),
+                  "source_path": point.source_path, "raw_slices": point.raw_slices}
+        for name, expected_value in expected_values.items():
+            if not _metadata_equal(values[name], expected_value):
                 raise InvalidScanFile(f"{path}: {name} disagrees with the prepared task")
 
 
@@ -345,8 +357,7 @@ def _execute(task: PointTask, num_threads: int | None) -> PointOutcome:
                 raise InputError(f"input file does not exist: {task.source}")
             source = stack.enter_context(h5py.File(task.source, "r"))
             source_stat = os.stat(task.source)
-            if "entry1/reconstruction" in source:
-                raise InputError("input contains reserved group /entry1/reconstruction")
+            _check_raw_input(source)
             info = reconstructor._scan_info(source)
             depth_um = _check_unchanged(task, info, reconstructor)
             first_raw = source["entry1/data/data"][reconstructor.frame_skip]
@@ -509,14 +520,13 @@ def _check_destination(directory: Path) -> None:
 
 
 def _empty_catalog(n_points: int) -> dict:
-    """Return catalog columns filled with each dataset's missing value, or zero."""
+    """Return catalog columns filled with each column's fill value, or zero."""
     catalog = {}
-    for name, spec in layout.CATALOG_DATASETS.items():
-        missing = spec.attrs.get("missing", 0)
+    for name, spec in layout.POINT_COLUMNS.items():
         if h5py.check_string_dtype(spec.dtype) is not None:
-            catalog[name] = [missing or ""] * n_points
+            catalog[name] = [""] * n_points
         else:
-            fill = np.nan if missing == "nan" else missing
+            fill = 0 if spec.fill is None else spec.fill
             catalog[name] = np.full((n_points, *spec.shape[1:]), fill, dtype=spec.dtype)
     return catalog
 
@@ -548,12 +558,12 @@ class PreparedScan:
         task.
     """
 
-    def __init__(self, directory: Path, tasks: tuple[PointTask, ...], run_values: dict,
+    def __init__(self, directory: Path, tasks: tuple[PointTask, ...], request: dict,
                  catalog: dict) -> None:
         self.directory = directory
         self.path = directory / layout.SCAN_FILENAME
         self.tasks = tasks
-        self._run_values = run_values
+        self._request = request
         self._catalog = catalog
         # Keep independent settings dictionaries: exported tasks can be edited
         # or rebuilt by an external scheduler, but cannot change this request.
@@ -584,8 +594,7 @@ class PreparedScan:
 
     def _publish(self) -> None:
         write_catalog(self.path, created=self._created, run_status=self._run_status,
-                      run_values=self._run_values, catalog=self._catalog,
-                      replace=self._published)
+                      points=self._catalog, replace=self._published, **self._request)
         self._published = True
         self._dirty = False
         self._last_snapshot = perf_counter()
@@ -612,11 +621,11 @@ class PreparedScan:
         return True
 
     def _status(self, index: int) -> PointStatus:
-        return PointStatus(int(self._catalog["/catalog/status"][index]))
+        return PointStatus(int(self._catalog["/points/statuses"][index]))
 
     def _set_status(self, index: int, status: PointStatus, error: str = "") -> None:
-        self._catalog["/catalog/status"][index] = int(status)
-        self._catalog["/catalog/errors"][index] = error
+        self._catalog["/points/statuses"][index] = int(status)
+        self._catalog["/points/errors"][index] = error
         self._dirty = True
 
     def _require_running(self) -> None:
@@ -704,12 +713,12 @@ class PreparedScan:
         A point without a recorded outcome reports its catalog status, such as
         ``"pending"`` or ``"writing"``.
         """
-        statuses = self._catalog["/catalog/status"]
-        ids = self._catalog["/catalog/point_ids"]
+        statuses = self._catalog["/points/statuses"]
+        ids = self._catalog["/points/point_ids"]
         return tuple(
             self._recorded.get(index) or PointOutcome(
                 index, ids[index], PointStatus(int(statuses[index])).name.lower(),
-                self._catalog["/catalog/errors"][index] or None,
+                self._catalog["/points/errors"][index] or None,
             )
             for index in range(len(statuses))
         )
@@ -732,7 +741,7 @@ class PreparedScan:
             If the catalog cannot be published.
         """
         self._require_running()
-        statuses = self._catalog["/catalog/status"]
+        statuses = self._catalog["/points/statuses"]
         unsettled = int((statuses == PointStatus.WRITING).sum())
         if unsettled:
             raise InputError(f"{unsettled} dispatched point(s) have no recorded outcome")
@@ -758,7 +767,7 @@ class PreparedScan:
         """
         if self._run_status != RunStatus.RUNNING:
             return
-        statuses = self._catalog["/catalog/status"]
+        statuses = self._catalog["/points/statuses"]
         statuses[statuses == PointStatus.WRITING] = PointStatus.INTERRUPTED
         statuses[statuses == PointStatus.PENDING] = PointStatus.UNATTEMPTED
         self._run_status = RunStatus.FAILED
@@ -835,48 +844,41 @@ def prepare_scan(
     directory = Path(os.path.abspath(directory))
     _check_destination(directory)
 
-    # Initialize columns with their missing values and pending status. Failed
-    # input inspection leaves the shape and depth count at zero.
+    # Initialize columns with their fill values and pending status. Failed
+    # input inspection leaves the shape at zero.
     catalog = _empty_catalog(len(sources))
     tasks = []
     for index, (source, point_id, point_path) in enumerate(zip(sources, point_ids, point_paths)):
-        catalog["/catalog/point_ids"][index] = point_id
-        catalog["/catalog/point_paths"][index] = point_path
-        catalog["/catalog/source_paths"][index] = os.fspath(source)
-        try:
-            status = os.stat(source)
-            catalog["/catalog/source_sizes"][index] = status.st_size
-            catalog["/catalog/source_mtimes_ns"][index] = status.st_mtime_ns
-        except OSError:
-            pass
+        catalog["/points/point_ids"][index] = point_id
+        catalog["/points/paths"][index] = point_path
+        catalog["/points/source_paths"][index] = os.fspath(source)
         try:
             row = _inspect(source, reconstructor)
         except EXPECTED_POINT_ERRORS as error:
-            catalog["/catalog/status"][index] = int(PointStatus.FAILED)
-            catalog["/catalog/errors"][index] = str(error)
+            catalog["/points/statuses"][index] = int(PointStatus.FAILED)
+            catalog["/points/errors"][index] = str(error)
             continue
         tasks.append(PointTask(
             point_id=point_id, index=index, source=os.fspath(source),
             output=os.fspath(directory / point_path), compression=compression,
             **shared, **row,
         ))
-        catalog["/catalog/raw_slices"][index] = row["raw_slices"]
-        catalog["/catalog/scan_numbers"][index] = _missing(row["scan_number"], -1)
-        catalog["/catalog/sample_positions"][index] = row["sample_position"]
-        catalog["/catalog/energies_kev"][index] = _missing(row["energy_kev"], np.nan)
-        catalog["/catalog/image_shapes"][index] = row["image_shape"]
-        catalog["/catalog/n_depths"][index] = row["n_depths"]
-        catalog["/catalog/depth_bounds"][index] = row["depth_bounds_um"]
-        catalog["/catalog/pixel_types"][index] = row["pixel_type"]
+        catalog["/points/scan_numbers"][index] = _missing(row["scan_number"], -1)
+        catalog["/points/sample_positions"][index] = row["sample_position"]
+        catalog["/points/energies_kev"][index] = _missing(row["energy_kev"], np.nan)
+        catalog["/points/shapes"][index] = (row["n_depths"], *row["image_shape"])
+        catalog["/points/depth_bounds"][index] = row["depth_bounds_um"]
+        catalog["/points/dtypes"][index] = row["pixel_type"]
 
-    run_values = {
-        "/run/native_version": native_version(),
-        **settings_values(shared["detector"], shared["settings"], shared["geometry_path"],
-                          shared["geometry_xml"]),
+    request = {
+        "native_version": native_version(),
+        "parameters": parameter_values(shared["detector"], shared["settings"]),
+        "geometry_path": shared["geometry_path"],
+        "geometry_xml": shared["geometry_xml"],
     }
     directory.mkdir(parents=True, exist_ok=True)
     (directory / layout.POINT_DIRECTORY).mkdir()
-    scan = PreparedScan(directory, tuple(tasks), run_values, catalog)
+    scan = PreparedScan(directory, tuple(tasks), request, catalog)
     scan._publish()
     return scan
 

@@ -14,13 +14,13 @@ Every other path returns a {class}`~lauelab.reconstruct.ReconstructionResult`. R
 
 The subprocess environment defaults `OPENBLAS_NUM_THREADS` to `1`. The reconstruction programs link OpenBLAS through GSL but do not call BLAS, so extra OpenBLAS workers only consume CPU time. An existing caller setting is preserved. The `num_threads` argument independently controls the CPU program's OpenMP reconstruction threads. The executable's `image_range` (`-f`/`-l`) options apply only to scans stored as one file per image; multi-image HDF5 input used by `Reconstructor` has no file range.
 
-## Behaviour changes in this release
+## Differences from the executable
 
-The `reconstructN_cpu` option `-n <tag>` previously had no effect because the normalization-vector length was taken from an HDF5 status code. It now scales each scan frame by `entry1/<tag>`, falling back to `<tag>` at the file root, divided by 102 for `mA` and 88100 for `cnt3`. The in-process path applies the same divisors but reads only `entry1/<tag>`, and it raises {class}`~lauelab.indexing.InputError` when that vector is missing or shorter than the scan. The executable silently skips normalization in the same case. This asymmetry is deliberate: the in-process path reports a request it cannot honour.
+The `reconstructN_cpu` option `-n <tag>` scales each scan frame by `entry1/<tag>`, or by `<tag>` at the file root when `entry1/<tag>` is absent, divided by 102 for `mA` and 88100 for `cnt3`. The in-process path uses the same divisors but reads only `entry1/<tag>`. It raises {class}`~lauelab.indexing.InputError` when that vector is missing or shorter than the scan; in the same case, the executable skips normalization without a message. This difference is deliberate: the in-process path reports a request that it cannot complete.
 
-`Reconstructor` accepts `frame_skip` and `wire_skip`, the executable's compiled `MULTI_IMAGE_SKIP` and `MULTI_IMAGE_SKIPV`. Both default to 1, which gives the same output as earlier releases. Scan and point files now contain `/settings/frame_skip` and `/settings/wire_skip` without a version change. Version 2 files written by earlier releases do not contain these datasets and fail validation; reconstruct those points again.
+`Reconstructor` accepts `frame_skip` and `wire_skip`, which are the executable's compiled `MULTI_IMAGE_SKIP` and `MULTI_IMAGE_SKIPV`. Both default to 1, the values compiled into the executable. The scan catalog contains `/parameters/frame_skip` and `/parameters/wire_skip`, and point files contain `/entry1/reconstruction/frame_skip` and `/entry1/reconstruction/wire_skip`.
 
-A wire axis exactly parallel to the positioner x axis, with a zero wire rotation vector, now uses the identity transformation in both reconstruction paths. Earlier `reconstructN_cpu` releases produced non-finite values for this valid zero-rotation geometry.
+A wire axis exactly parallel to the positioner x axis, with a zero wire rotation vector, uses the identity transformation in both reconstruction paths.
 
 ```{eval-rst}
 .. currentmodule:: lauelab.reconstruct
@@ -37,7 +37,7 @@ A wire axis exactly parallel to the positioner x axis, with a zero wire rotation
 .. autoclass:: ReconstructionResult
    :members:
 
-``ReconstructionResult`` is a dataclass with the same six leading fields as the former named tuple. Attribute access and positional construction are unchanged; tuple unpacking is not supported.
+``ReconstructionResult`` is a dataclass. Its fields can be given by position in the order listed, and tuple unpacking is not supported.
 
 .. autofunction:: reconstruct_points
 

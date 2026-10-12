@@ -323,12 +323,10 @@ def test_export_equals_the_per_depth_writer(tmp_path, variant, changes):
             for name in left_objects:
                 a, b = left_objects[name], right_objects[name]
                 assert type(a) is type(b), name
-                # Export adds NeXus group annotations; original metadata and pixels agree.
+                # The per-depth writer keeps the input's depth dataset, which
+                # has no units in the synthetic input; export states micron.
                 extra = set(b.attrs) - set(a.attrs)
-                allowed = {"NX_class", "default"} if name == "entry1" else (
-                    {"NX_class", "signal", "axes"} if name == "entry1/data" else set()
-                )
-                assert extra <= allowed, name
+                assert extra == ({"units"} if name == "entry1/depth" else set()), name
                 assert set(a.attrs) <= set(b.attrs), name
                 for attribute in a.attrs:
                     np.testing.assert_array_equal(a.attrs[attribute], b.attrs[attribute])
@@ -373,17 +371,17 @@ def test_exported_files_index_like_the_scan_frame(run, indexer, tmp_path):
     assert from_file.metadata["scan_number"] == from_scan.metadata["scan_number"] == 7
 
 
-def test_export_refuses_anything_but_a_complete_point_file(run, tmp_path):
+def test_export_refuses_anything_but_a_valid_point_file(run, tmp_path):
     with pytest.raises(FileNotFoundError):
         export_per_depth(ScanReader(run).point_path("gone"), tmp_path / "gone_")
     with pytest.raises(InvalidScanFile, match="is a reconstruction-scan catalog"):
         export_per_depth(run, tmp_path / "catalog_")
-    incomplete = shutil.copy(ScanReader(run).point_path("first"), tmp_path / "incomplete.h5")
-    with h5py.File(incomplete, "r+") as handle:
-        handle["entry1/reconstruction/point/complete"][()] = 0
-    with pytest.raises(InvalidScanFile, match="not complete"):
-        export_per_depth(incomplete, tmp_path / "incomplete_")
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["incomplete.h5"]
+    damaged = shutil.copy(ScanReader(run).point_path("first"), tmp_path / "damaged.h5")
+    with h5py.File(damaged, "r+") as handle:
+        del handle["entry1/reconstruction/computed_depth_intensity"]
+    with pytest.raises(InvalidScanFile, match="computed_depth_intensity"):
+        export_per_depth(damaged, tmp_path / "damaged_")
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["damaged.h5"]
 
 
 def test_guide_example_indexes_around_the_brightest_depth(run, indexer, tmp_path):

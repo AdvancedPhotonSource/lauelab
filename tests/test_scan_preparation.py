@@ -15,7 +15,7 @@ import pytest
 from conftest import requires_liblaue
 from lauelab.indexing import InputError, InvalidScanFile
 from lauelab.reconstruct import (
-    PointTask, PreparedScan, ScanReader, prepare_scan, validate_scan_file,
+    PointTask, PreparedScan, ScanReader, prepare_scan, reconstruct_point, validate_scan_file,
 )
 from lauelab.reconstruct import _scan_layout as layout
 from lauelab.reconstruct.scan import _point_task
@@ -43,7 +43,7 @@ def _prepare(paths, directory, **changes):
 
 def _catalog(path):
     with h5py.File(path, "r") as source:
-        return {name: source[name][...] for name in layout.CATALOG_DATASETS}
+        return {name: source[name][...] for name in layout.POINT_COLUMNS}
 
 
 @pytest.fixture(scope="module")
@@ -78,27 +78,36 @@ def test_initial_catalog_lists_every_input_in_order_before_any_point_runs(prepar
     assert not any((scan.directory / "points").iterdir())
 
 
-def test_catalog_records_provenance_acquisition_and_output_description(prepared):
+def test_catalog_records_acquisition_and_output_description(prepared):
     scan, work = prepared
     catalog = _catalog(scan.path)
     source = work / "in/a/Twin2_wire_1.h5"
-    status = os.stat(source)
-    assert catalog["/catalog/source_paths"][0].decode() == os.fspath(source)
-    assert catalog["/catalog/source_sizes"][0] == status.st_size
-    assert catalog["/catalog/source_mtimes_ns"][0] == status.st_mtime_ns
-    assert catalog["/catalog/source_sizes"][1] == -1
-    with h5py.File(source, "r") as file:
-        n_stored = file["entry1/data/data"].shape[0]
-    assert catalog["/catalog/raw_slices"].tolist() == [[1, n_stored - 1], [-1, -1], [1, n_stored - 1]]
-    assert catalog["/catalog/scan_numbers"].tolist() == [1, -1, 1]
-    np.testing.assert_array_equal(catalog["/catalog/sample_positions"][0], [1.5, -2.0, 3.25])
-    assert np.isnan(catalog["/catalog/sample_positions"][1]).all()
-    assert catalog["/catalog/energies_kev"][0] == 20.0
-    assert catalog["/catalog/image_shapes"].tolist() == [[128, 128], [0, 0], [128, 128]]
-    assert catalog["/catalog/n_depths"].tolist() == [51, 0, 51]
-    assert catalog["/catalog/depth_bounds"][0].tolist() == [-25.0, 25.0]
+    assert catalog["/points/source_paths"][0].decode() == os.fspath(source)
+    assert catalog["/points/scan_numbers"].tolist() == [1, -1, 1]
+    np.testing.assert_array_equal(catalog["/points/sample_positions"][0], [1.5, -2.0, 3.25])
+    assert np.isnan(catalog["/points/sample_positions"][1]).all()
+    assert catalog["/points/energies_kev"][0] == 20.0
+    assert catalog["/points/shapes"].tolist() == [[51, 128, 128], [0, 0, 0], [51, 128, 128]]
+    assert catalog["/points/depth_bounds"][0].tolist() == [-25.0, 25.0]
     # wire_edge="both" stores int32 unless a type is requested.
-    assert catalog["/catalog/pixel_types"].tolist() == [1, -1, 1]
+    assert catalog["/points/dtypes"].tolist() == [1, -1, 1]
+    assert catalog["/points/statuses"].tolist() == [0, 3, 0]
+
+
+def test_codes_are_hdf5_enumerated_types_with_declared_fill_values(prepared):
+    scan, _ = prepared
+    with h5py.File(scan.path, "r") as source:
+        assert h5py.check_enum_dtype(source.attrs.get_id("status").dtype) == {
+            "running": 0, "finished": 1, "cancelled": 2, "failed": 3,
+        }
+        statuses = h5py.check_enum_dtype(source["points/statuses"].dtype)
+        assert statuses == {status.name.lower(): status.value for status in layout.PointStatus}
+        dtypes = h5py.check_enum_dtype(source["points/dtypes"].dtype)
+        assert dtypes == {"float32": 0, "int32": 1, "int16": 2, "uint16": 3, "float64": 5,
+                          "int8": 6, "uint8": 7, "none": -1}
+        assert source["points/scan_numbers"].fillvalue == -1
+        assert np.isnan(source["points/energies_kev"].fillvalue)
+        assert source["parameters/rows_per_stripe"].fillvalue == -1
 
 
 def test_catalog_embeds_settings_geometry_and_versions(prepared):
@@ -106,13 +115,16 @@ def test_catalog_embeds_settings_geometry_and_versions(prepared):
     with h5py.File(scan.path, "r") as source:
         assert source.attrs["format"] == layout.SCAN_FORMAT
         assert source.attrs["version"] == layout.SCAN_VERSION
-        assert source["settings/wire_edge"][()].decode() == "both"
-        assert source["settings/percent_brightest"][()] == 50.0
-        assert source["settings/output_pixel_type"][()] == -1
-        assert source["settings/rows_per_stripe"][()] == -1
-        assert source["settings/depth_range"][...].tolist() == list(DEPTH_RANGE_UM)
+        assert source["parameters/wire_edge"][()].decode() == "both"
+        assert source["parameters/percent_brightest"][()] == 50.0
+        assert source["parameters/output_pixel_type"][()] == -1
+        assert source["parameters/rows_per_stripe"][()] == -1
+        assert source["parameters/depth_range"][...].tolist() == list(DEPTH_RANGE_UM)
+        assert source["parameters/memory_limit_mb"].attrs["units"] == "MiB"
         assert source["geometry/xml"][()].decode() == Path(GEOMETRY_FILE).read_text()
-        assert source["run/native_version"][()].decode()
+        assert source["geometry"].attrs["path"] == os.fspath(GEOMETRY_FILE)
+        assert source.attrs["program"] == "lauelab"
+        assert source.attrs["native_version"]
         assert source.attrs["lauelab_version"]
 
 
@@ -297,7 +309,7 @@ def test_a_reader_keeps_the_snapshot_it_opened(tmp_path):
     before = ScanReader(scan.path)
     with h5py.File(scan.path, "r") as held:
         scan.close()
-        assert held["run/status"][()] == layout.RunStatus.RUNNING
+        assert held.attrs["status"] == layout.RunStatus.RUNNING
     assert before.run_status == "running"
     assert ScanReader(scan.path).run_status == "failed"
     assert before.point_path("x") == scan.directory / "points/x.h5"
@@ -332,24 +344,29 @@ def test_other_files_are_not_catalogs(tmp_path, attrs, message):
 # --- Validation --------------------------------------------------------------
 
 def _damage(path, name, value):
+    """Replace a dataset by ``value``, keeping its attributes and numeric fill value."""
     with h5py.File(path, "r+") as file:
+        old = file[name]
+        attributes = dict(old.attrs)
+        fill = {} if h5py.check_string_dtype(old.dtype) else {"fillvalue": old.fillvalue}
         del file[name]
-        file[name] = value
+        file.create_dataset(name, data=value, **fill).attrs.update(attributes)
 
 
 @pytest.mark.parametrize(("name", "value", "message"), [
-    ("catalog/point_ids", np.array(["a", "a"], dtype=object), "point IDs"),
-    ("catalog/point_paths", np.array(["points/a.h5", "../b.h5"], dtype=object), "not a point-file path"),
-    ("catalog/point_paths", np.array(["points/a.h5", "points/.b.h5"], dtype=object), "not a point-file path"),
-    ("catalog/point_paths", np.array(["points/a.h5", "points/A.h5"], dtype=object), "unique, ignoring case"),
-    ("catalog/status", np.array([0, 9], dtype="u1"), "unknown"),
-    ("catalog/status", np.array([3, 0], dtype="u1"), "no error text"),
-    ("catalog/n_depths", np.array([51, 0], dtype="<i4"), "only a failed point"),
-    ("catalog/pixel_types", np.array([4, 3], dtype="<i4"), "pixel type 4"),
-    ("catalog/depth_bounds", np.array([[25.0, -25.0], [-25.0, 25.0]]), "finite and ordered"),
-    ("catalog/errors", np.array([b"x", b"y"], dtype="S8"), "dtype"),
-    ("catalog/source_sizes", np.array([1, 2, 3], dtype="<i8"), "shape"),
-    ("settings/detector", np.array(0.0), "dtype"),
+    ("points/point_ids", np.array(["a", "a"], dtype=object), "point IDs"),
+    ("points/paths", np.array(["points/a.h5", "../b.h5"], dtype=object), "not a point-file path"),
+    ("points/paths", np.array(["points/a.h5", "points/.b.h5"], dtype=object), "not a point-file path"),
+    ("points/paths", np.array(["points/a.h5", "points/A.h5"], dtype=object), "unique, ignoring case"),
+    ("points/statuses", np.array([0, 9], dtype=layout.POINT_STATUS_TYPE), "unknown"),
+    ("points/statuses", np.array([3, 0], dtype=layout.POINT_STATUS_TYPE), "no error text"),
+    ("points/statuses", np.array([0, 0], dtype="u1"), "enumerated type"),
+    ("points/shapes", np.array([[51, 128, 128], [0, 128, 128]], dtype="<i4"), "only a failed point"),
+    ("points/dtypes", np.array([4, 3], dtype=layout.PIXEL_TYPE), "pixel type 4"),
+    ("points/depth_bounds", np.array([[25.0, -25.0], [-25.0, 25.0]]), "finite and ordered"),
+    ("points/errors", np.array([b"x", b"y"], dtype="S8"), "dtype"),
+    ("points/scan_numbers", np.array([1, 2, 3], dtype="<i4"), "shape"),
+    ("parameters/detector", np.array(0.0), "dtype"),
 ])
 def test_validator_rejects_structural_damage(tmp_path, name, value, message):
     paths = [_input(tmp_path / f"in/{stem}.h5") for stem in ("a", "b")]
@@ -360,10 +377,42 @@ def test_validator_rejects_structural_damage(tmp_path, name, value, message):
         validate_scan_file(scan.path)
 
 
+@pytest.mark.parametrize(("change", "message"), [("fill", "fill value"), ("units", "units 'um'")])
+def test_validator_requires_declared_fill_values_and_units(tmp_path, change, message):
+    with _prepare([_input(tmp_path / "in/a.h5")], tmp_path / "out") as scan:
+        pass
+    with h5py.File(scan.path, "r+") as file:
+        name = "points/scan_numbers" if change == "fill" else "points/depth_bounds"
+        value = file[name][...]
+        del file[name]
+        file[name] = value
+    with pytest.raises(InvalidScanFile, match=message):
+        validate_scan_file(scan.path)
+
+
 def test_a_settled_run_cannot_hold_pending_points(tmp_path):
     source = _input(tmp_path / "in/x.h5")
     with _prepare([source], tmp_path / "out") as scan:
         # The published running snapshot lists the point as pending.
-        _damage(scan.path, "run/status", np.array(layout.RunStatus.FINISHED, dtype="u1"))
+        with h5py.File(scan.path, "r+") as file:
+            file.attrs.create("status", layout.RunStatus.FINISHED, dtype=layout.RUN_STATUS_TYPE)
         with pytest.raises(InvalidScanFile, match="finished run has unsettled"):
             validate_scan_file(scan.path)
+
+
+def test_point_file_links_list_exactly_the_complete_points(tmp_path):
+    paths = [_input(tmp_path / f"in/{stem}.h5") for stem in ("a", "b")]
+    with _prepare(paths, tmp_path / "out") as scan:
+        assert not list(h5py.File(scan.path, "r")["point_files"])
+        scan.record(reconstruct_point(scan.tasks[0], num_threads=1))
+        scan.snapshot(force=True)
+        with h5py.File(scan.path, "r") as file:
+            link = file["point_files"].get("a", getlink=True)
+            assert (link.filename, link.path) == ("points/a.h5", "/")
+            assert list(file["point_files"]) == ["a"]
+            # The link opens the point file relative to the catalog.
+            assert file["point_files/a/entry1/data/data"].shape == (51, 128, 128)
+    with h5py.File(scan.path, "r+") as file:
+        file["point_files/b"] = h5py.ExternalLink("points/b.h5", "/")
+    with pytest.raises(InvalidScanFile, match="one external link to each complete point"):
+        validate_scan_file(scan.path)

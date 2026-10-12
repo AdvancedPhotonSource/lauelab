@@ -70,8 +70,8 @@ def _assert_same_files(left, right):
     assert left_attrs == right_attrs
     assert left_values.keys() == right_values.keys()
     for name in left_values:
-        if name == "entry1/reconstruction/date":
-            continue  # Each reconstruction has its own processing timestamp.
+        if name == "entry1/reconstruction/elapsed_seconds":
+            continue  # Each reconstruction has its own wall time.
         np.testing.assert_array_equal(left_values[name], right_values[name], err_msg=name)
 
 

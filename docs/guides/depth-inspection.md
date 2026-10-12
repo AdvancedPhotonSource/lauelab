@@ -2,13 +2,13 @@
 
 A reconstructed point is a stack of frames, one per sample depth. To examine how a feature varies with depth, choose a reference image, place square regions of interest (ROIs) on it, and plot the intensity of each region through depth. The inspection functions support both Jupyter notebooks and the Laue Portal.
 
-Intensity traces use the **stored** pixels, after conversion to the output pixel type. Signed output types preserve negative values, so a trace can cross zero. [Reconstruction scan format](../development/reconstruction-scan-format.md) defines stored, computed, and raw values.
+Intensity traces use the **stored** pixels, after conversion to the output pixel type. In a signed output type, negative values are kept, so a trace can cross zero. [Reconstruction scan format](../development/reconstruction-scan-format.md) defines stored, computed, and raw values.
 
 The examples inspect a point reconstructed with {func}`~lauelab.reconstruct.reconstruct_scan`; see [Reconstruct a wire scan](reconstruction.md). Replace `run/scan.h5` and the point ID with your own. The same functions accept a {class}`~lauelab.reconstruct.PointReader` opened directly on a point file.
 
 ## Choose a reference image
 
-Each point embeds three images with the shape of one frame:
+Each point file contains three images with the shape of one frame:
 
 | Kind | Values | Meaning |
 | --- | --- | --- |
@@ -47,11 +47,21 @@ assert bounds_center(spot) == (64.0, 64.0)
 assert bounds_center(edge) == (51.5, 69.5)
 ```
 
-The centre snaps to the nearest integer coordinate for odd sizes or half-integer coordinate for even sizes, with ties resolved toward the lower coordinate. The entire square must fit inside the image; otherwise `square_bounds` raises {class}`~lauelab.indexing.InputError`. Each call creates new bounds, so existing ROIs retain their size.
+Pixel `(x, y)` covers `x - 0.5` to `x + 0.5` on each axis, and NumPy reads it as `frame[y, x]`. ROI coordinates are stored-image pixels; unbinned detector coordinates are not used. The bounds select `data[:, y0:y1, x0:x1]`, which is exactly `N × N` pixels for a positive integer size `N`.
+
+For a click at `(x, y)`, the centre of the square is the nearest legal centre. The legal centres of an odd size are the integers, and those of an even size are the half-integers. When a click is at equal distance from two legal centres, the lower coordinate is selected. On each axis this gives
+
+```{math}
+x_0 = \lceil x - N/2 \rceil, \qquad x_1 = x_0 + N,
+```
+
+and {func}`~lauelab.reconstruct.inspection.bounds_center` returns the centre {math}`x_0 + (N - 1)/2`, which is derived from the bounds. `square_bounds` raises {class}`~lauelab.indexing.InputError` when any bound lies outside the image or the click is not finite. Accepted bounds are used unchanged at every display scale. Each call creates new bounds, so existing ROIs retain their size.
+
+ROIs are created during analysis and are not stored in the point file. The datasets `/entry1/detector/startx`, `starty`, `binx`, and `biny` of the point file, copied from the input, contain the acquisition readout region and binning that indexing uses; they are not ROIs. `lauelab.reconstruct.inspection` implements these rules, and the builders in `lauelab.visualization` display them. The fixtures under `tests/data/reconstruction_contract/` are test cases for these rules, so the Laue Portal and `lauelab` use the same definition.
 
 ## Trace intensity through depth
 
-{func}`~lauelab.reconstruct.inspection.depth_trace` sums the stored pixels of a region at every depth and returns a {class}`~lauelab.reconstruct.inspection.DepthTrace`. With no bounds it returns the full-frame trace, which is the reduction embedded in the file and reads no pixels. {func}`~lauelab.reconstruct.inspection.roi_traces` does the same for several named regions.
+{func}`~lauelab.reconstruct.inspection.depth_trace` sums the stored pixels of a region at every depth and returns a {class}`~lauelab.reconstruct.inspection.DepthTrace`. With no bounds, it returns the full-frame trace from the reduction stored in the file, without reading pixels. {func}`~lauelab.reconstruct.inspection.roi_traces` does the same for several named regions.
 
 ```python
 from lauelab.reconstruct.inspection import depth_trace, roi_traces
@@ -67,11 +77,11 @@ spot_peak_um = traces["spot"].depth_um[traces["spot"].values.argmax()]
 
 ROI reductions read one depth block at a time, using at most 64 MiB of pixel data by default. Set `max_bytes` on `depth_trace` or `roi_traces` to choose another budget; it must hold at least one plane of the ROI. The small returned traces and HDF5 caches are additional. Multiple ROIs are reduced in sequence.
 
-`values` has shape `(n_depths,)`. Integer pixels are summed exactly in `numpy.int64`; floating-point pixels are summed in `numpy.float64`. For the horizontal axis, use `depth_um` for physical depth in µm or `depth_index` for the zero-based frame index.
+`values` has shape `(n_depths,)`: the sum of the stored pixels in the bounds at each depth. Integer pixels are summed exactly in `numpy.int64`; floating-point pixels are summed in `numpy.float64`. The full-frame trace is `/entry1/reconstruction/depth_intensity` of the point file. `roi_traces` with no ROIs returns an empty dictionary. For the horizontal axis, use `depth_um` for physical depth in µm or `depth_index` for the zero-based frame index.
 
-The trace provides two display transformations:
+A trace has two methods for display:
 
-- `trace.normalized()` divides by the trace's own maximum and preserves signs. When the maximum is zero or negative, `values` is `None` and `reason` says why. The division preserves zero and the sign of each sample.
+- `trace.normalized()` divides the trace by its own maximum. Zero and the sign of each sample are kept. When the maximum is zero or negative, `values` is `None` and `reason` contains the cause.
 - `trace.log_samples()` returns the indices of positive samples for a logarithmic axis and counts the zero or negative samples omitted.
 
 ```python
@@ -84,7 +94,7 @@ n_shown, n_omitted = len(samples.kept), samples.n_omitted
 
 ## Plot
 
-The figure builders in `lauelab.visualization` take prepared data and display choices. Axis, colour, and normalization changes operate on the prepared arrays without further file reads.
+The figure builders in `lauelab.visualization` take prepared data and display choices. A change of axis, colour, or normalization uses the prepared arrays and does not read the file again.
 
 ```python
 from lauelab.visualization import (
@@ -101,13 +111,13 @@ roi_figure = plot_roi_traces(
 
 {func}`~lauelab.visualization.plot_reference_image` places the origin at the upper left, with x increasing to the right and y downward. Both axes use the same pixel scale, and ROI outlines follow pixel edges.
 
-{func}`~lauelab.visualization.plot_depth_trace` plots intensity against physical depth in µm or depth index, with an optional marker at the selected depth. {func}`~lauelab.visualization.plot_roi_traces` plots one trace per ROI. If normalization is unavailable, the plot omits that trace and annotates the reason. On a logarithmic axis, it omits nonpositive samples and reports their count. Omitted samples leave gaps in the plotted lines. Supply matching names and colours to identify each ROI across the image and trace plots.
+{func}`~lauelab.visualization.plot_depth_trace` plots intensity against physical depth in µm or depth index, with an optional marker at the selected depth. {func}`~lauelab.visualization.plot_roi_traces` plots one trace per ROI. If normalization is unavailable, the plot omits that trace and annotates the reason. On a logarithmic axis, it omits nonpositive samples and reports their count. The plotted line has a gap at each omitted sample. Supply matching names and colours to identify each ROI across the image and trace plots.
 
 Every builder accepts `layout_update` and per-role `trace_update`; the roles are `"image"` and `"roi"` for the image, `"trace"` and `"selected"` for the single trace, and `"roi"` for the ROI traces. {data}`~lauelab.visualization.DEPTH_AXIS_OPTIONS`, {data}`~lauelab.visualization.INTENSITY_OPTIONS`, and {data}`~lauelab.visualization.REFERENCE_OPTIONS` list the choices for controls.
 
 ## Inspect an in-memory result
 
-{class}`~lauelab.reconstruct.inspection.ArrayPoint` gives a `(depth, y, x)` array the same interface, so a result of {meth}`Reconstructor.reconstruct_array() <lauelab.reconstruct.Reconstructor.reconstruct_array>` or of `Reconstructor.reconstruct(..., return_images=True)` can be inspected without writing a file. The array is taken as the stored data, so a `numpy.float64` stack keeps float64 values. It provides the `"sum_reconstructed"` reference; requests for raw reference images raise `InputError`.
+{class}`~lauelab.reconstruct.inspection.ArrayPoint` gives a `(depth, y, x)` array the same interface, so a result of {meth}`Reconstructor.reconstruct_array() <lauelab.reconstruct.Reconstructor.reconstruct_array>` or of `Reconstructor.reconstruct(..., return_images=True)` can be inspected without writing a file. The array is used as the stored data, so a `numpy.float64` stack remains `numpy.float64`. It provides the `"sum_reconstructed"` reference; requests for raw reference images raise `InputError`.
 
 ```python
 from lauelab.reconstruct.inspection import ArrayPoint
@@ -132,7 +142,7 @@ with PerDepthReader(paths, point_id="scan12_p1") as point:
     trace = depth_trace(point, (60, 65, 50, 55))
 ```
 
-These files have no embedded full-frame reduction, so `depth_trace(point)` reads one frame at a time. The reconstructed reference also reads one frame at a time. Raw references are unavailable and raise `InputError`; retain the point file if you need those backgrounds. The reader opens at most one file at a time and closes it after each operation. Exiting the context prevents further reads; returned arrays remain usable.
+These files have no embedded full-frame reduction, so `depth_trace(point)` reads one frame at a time. The calculation of the reconstructed reference also reads one frame at a time. Raw references are unavailable and raise `InputError`; retain the point file if you need those backgrounds. The reader opens at most one file at a time and closes it after each operation. Exiting the context prevents further reads; returned arrays remain usable.
 
 ## Do your own analysis
 

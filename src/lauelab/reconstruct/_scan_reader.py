@@ -16,8 +16,9 @@ from lauelab._hdf5 import check_format_version
 from lauelab.indexing.errors import InputError, InvalidScanFile
 
 from . import _scan_layout as layout
+from ._reader import _scalar, read_acquisition, read_image_geometry
 from ._scan_layout import PointStatus, RunStatus
-from ._writer import PIXEL_DTYPES
+from ._writer import PIXEL_DTYPES, pixel_type
 
 REFERENCE_IMAGES = ("first_raw", "sum_raw", "sum_reconstructed")
 
@@ -138,66 +139,106 @@ def _is_variable_text(dtype) -> bool:
     return info is not None and info.length is None
 
 
+def _is_fixed_text(dtype) -> bool:
+    info = h5py.check_string_dtype(np.dtype(dtype))
+    return info is not None and info.length is not None
+
+
 def _check_dataset(source, path: str, dtype, shape, label: str):
     if path not in source or not isinstance(source[path], h5py.Dataset):
         raise InvalidScanFile(f"{label}: dataset {path!r} is missing")
     dataset = source[path]
-    if _is_variable_text(dtype):
-        matches = _is_variable_text(dataset.dtype)
+    if isinstance(dtype, str):
+        matches, expected = _is_fixed_text(dataset.dtype), "fixed-length text"
+    elif _is_variable_text(dtype):
+        matches, expected = _is_variable_text(dataset.dtype), np.dtype(dtype)
     else:
-        matches = dataset.dtype == dtype
+        matches, expected = dataset.dtype == dtype, np.dtype(dtype)
     if not matches:
-        raise InvalidScanFile(f"{label}: {path!r} has dtype {dataset.dtype}, expected {np.dtype(dtype)}")
+        raise InvalidScanFile(f"{label}: {path!r} has dtype {dataset.dtype}, expected {expected}")
     if dataset.shape != tuple(shape):
         raise InvalidScanFile(f"{label}: {path!r} has shape {dataset.shape}, expected {tuple(shape)}")
+    return dataset
+
+
+def _check_spec(source, path: str, spec, shape, label: str):
+    """Check a catalog dataset against its layout entry."""
+    dataset = _check_dataset(source, path, spec.dtype, shape, label)
+    enum = h5py.check_enum_dtype(spec.dtype)
+    if enum is not None and h5py.check_enum_dtype(dataset.dtype) != enum:
+        raise InvalidScanFile(f"{label}: {path!r} must have the enumerated type {enum}")
+    if dataset.attrs.get("units") != spec.units:
+        raise InvalidScanFile(f"{label}: {path!r} must have units {spec.units!r}")
+    if (spec.fill is not None and h5py.check_string_dtype(spec.dtype) is None
+            and not _metadata_equal(dataset.fillvalue, spec.fill)):
+        raise InvalidScanFile(f"{label}: {path!r} must have the fill value {spec.fill!r}")
     return dataset
 
 
 def _check_row(index: int, values: dict) -> None:
     """Check the catalog row of one point for internal consistency."""
     label = f"point {index}"
-    status = PointStatus(int(values["status"][index]))
-    shape = tuple(int(value) for value in values["image_shapes"][index])
-    n_depths = int(values["n_depths"][index])
-    if n_depths == 0:
+    status = PointStatus(int(values["statuses"][index]))
+    shape = tuple(int(value) for value in values["shapes"][index])
+    if shape[0] == 0:
         # A point whose input could not be inspected: no metadata, an error.
-        if status != PointStatus.FAILED or shape != (0, 0):
+        if status != PointStatus.FAILED or shape != (0, 0, 0):
             raise InvalidScanFile(f"{label}: only a failed point can have no depths")
     else:
-        if min(shape) < 1 or n_depths < 0:
-            raise InvalidScanFile(f"{label}: catalog shape {(n_depths, *shape)} is empty")
+        if min(shape) < 1:
+            raise InvalidScanFile(f"{label}: catalog shape {shape} is empty")
         first, last = (float(value) for value in values["depth_bounds"][index])
         if not (np.isfinite(first) and np.isfinite(last) and first <= last):
             raise InvalidScanFile(f"{label}: depth_bounds must be finite and ordered")
-        if int(values["pixel_types"][index]) not in PIXEL_DTYPES:
-            raise InvalidScanFile(f"{label}: pixel type {int(values['pixel_types'][index])} is unknown")
-        start, stop = (int(value) for value in values["raw_slices"][index])
-        if not 0 <= start < stop:
-            raise InvalidScanFile(f"{label}: raw_slices {(start, stop)} is not a slice range")
+        if int(values["dtypes"][index]) not in PIXEL_DTYPES:
+            raise InvalidScanFile(f"{label}: pixel type {int(values['dtypes'][index])} is unknown")
     if status == PointStatus.FAILED and not _text(values["errors"][index]):
         raise InvalidScanFile(f"{label}: a failed point has no error text")
+
+
+def _check_links(source, paths, statuses) -> None:
+    """Check that ``/point_files`` links exactly the complete points."""
+    links = source.get(layout.POINT_LINKS)
+    if not isinstance(links, h5py.Group):
+        raise InvalidScanFile(f"catalog: group {layout.POINT_LINKS!r} is missing")
+    found = {}
+    for name in links:
+        link = links.get(name, getlink=True)
+        found[name] = (link.filename, link.path) if isinstance(link, h5py.ExternalLink) else None
+    expected = {Path(path).stem: (path, "/") for path, status in zip(paths, statuses)
+                if status == PointStatus.COMPLETE}
+    if found != expected:
+        raise InvalidScanFile(
+            f"catalog: {layout.POINT_LINKS} must hold one external link to each complete point"
+        )
 
 
 def _load_catalog(source: h5py.File) -> tuple[RunStatus, tuple[PointEntry, ...]]:
     """Validate an open ``scan.h5`` and return its run status and entries."""
     check_scan_format(source)
-    for name, spec in {**layout.SCAN_RUN_DATASETS, **layout.SETTINGS_DATASETS}.items():
-        _check_dataset(source, name, spec.dtype, spec.shape, "run")
+    for name in layout.SCAN_ATTRIBUTES:
+        if name not in source.attrs:
+            raise InvalidScanFile(f"run: root attribute {name!r} is missing")
     try:
-        run_status = RunStatus(int(source["run/status"][()]))
-    except ValueError as error:
+        run_status = RunStatus(int(source.attrs["status"]))
+    except (TypeError, ValueError) as error:
         raise InvalidScanFile(f"run: {error}") from error
+    for name, spec in layout.SCAN_DATASETS.items():
+        _check_spec(source, name, spec, spec.shape, "parameters")
+    if "path" not in source["geometry"].attrs:
+        raise InvalidScanFile("parameters: '/geometry' has no path attribute")
 
-    if "catalog/status" not in source:
-        raise InvalidScanFile("catalog: dataset '/catalog/status' is missing")
-    n_points = source["catalog/status"].shape[0] if source["catalog/status"].ndim == 1 else -1
+    statuses = source.get("points/statuses")
+    if not isinstance(statuses, h5py.Dataset):
+        raise InvalidScanFile("catalog: dataset '/points/statuses' is missing")
+    n_points = statuses.shape[0] if statuses.ndim == 1 else -1
     if n_points < 1:
         raise InvalidScanFile("catalog: a scan has at least one point")
-    for name, spec in layout.CATALOG_DATASETS.items():
-        _check_dataset(source, name, spec.dtype, (n_points, *spec.shape[1:]), "catalog")
-    values = {name.rsplit("/", 1)[1]: source[name][...] for name in layout.CATALOG_DATASETS}
+    for name, spec in layout.POINT_COLUMNS.items():
+        _check_spec(source, name, spec, (n_points, *spec.shape[1:]), "catalog")
+    values = {name.rsplit("/", 1)[1]: source[name][...] for name in layout.POINT_COLUMNS}
 
-    codes = set(values["status"].tolist())
+    codes = set(values["statuses"].tolist())
     unknown = codes - {int(status) for status in PointStatus}
     if unknown:
         raise InvalidScanFile(f"catalog: point status codes {sorted(unknown)} are unknown")
@@ -211,7 +252,7 @@ def _load_catalog(source: h5py.File) -> tuple[RunStatus, tuple[PointEntry, ...]]
     point_ids = [_text(value) for value in values["point_ids"]]
     if any(not value for value in point_ids) or len(set(point_ids)) != n_points:
         raise InvalidScanFile("catalog: point IDs must be non-empty and unique")
-    paths = [_text(value) for value in values["point_paths"]]
+    paths = [_text(value) for value in values["paths"]]
     for index, path in enumerate(paths):
         directory, _, name = path.partition("/")
         stem = name[:-len(layout.POINT_SUFFIX)] if name.endswith(layout.POINT_SUFFIX) else ""
@@ -222,25 +263,25 @@ def _load_catalog(source: h5py.File) -> tuple[RunStatus, tuple[PointEntry, ...]]
         raise InvalidScanFile("catalog: point paths must be unique, ignoring case")
     for index in range(n_points):
         _check_row(index, values)
+    _check_links(source, paths, values["statuses"])
 
     entries = []
     for index in range(n_points):
         energy = float(values["energies_kev"][index])
         scan_number = int(values["scan_numbers"][index])
-        rows, columns = (int(value) for value in values["image_shapes"][index])
         entries.append(PointEntry(
             index=index,
             point_id=point_ids[index],
-            status=PointStatus(int(values["status"][index])).name.lower(),
+            status=PointStatus(int(values["statuses"][index])).name.lower(),
             error=_text(values["errors"][index]),
             path=paths[index],
             source_path=_text(values["source_paths"][index]),
             scan_number=None if scan_number < 0 else scan_number,
             sample_position=tuple(float(value) for value in values["sample_positions"][index]),
             energy_kev=None if np.isnan(energy) else energy,
-            shape=(int(values["n_depths"][index]), rows, columns),
+            shape=tuple(int(value) for value in values["shapes"][index]),
             depth_bounds_um=tuple(float(value) for value in values["depth_bounds"][index]),
-            dtype=PIXEL_DTYPES.get(int(values["pixel_types"][index])),
+            dtype=PIXEL_DTYPES.get(int(values["dtypes"][index])),
         ))
     return run_status, tuple(entries)
 
@@ -273,8 +314,7 @@ class ScanReader:
     OSError
         If the file cannot be opened as HDF5.
     InvalidScanFile
-        If the file is not a valid catalog of a supported version, including a
-        file in the retired single-file layout.
+        If the file is not a valid catalog of a supported version.
     """
 
     def __init__(self, path) -> None:
@@ -328,25 +368,17 @@ class ScanReader:
         InputError
             If the catalog snapshot does not list the point as complete.
         InvalidScanFile
-            If the point file is invalid or its metadata disagrees with the
-            catalog.
+            If the point file is invalid, or its point ID, manifest index,
+            shape, dtype, or depth bounds disagree with the catalog.
         """
         entry = self._by_id[point_id]
         if not entry.complete:
             detail = f": {entry.error}" if entry.error else ""
             raise InputError(f"point {point_id!r} is {entry.status}{detail}")
         point = PointReader(self.directory / entry.path)
-        identity_matches = (point.point_id, point.manifest_index, point.shape, point.dtype) == (
-            entry.point_id, entry.index, entry.shape, entry.dtype,
-        )
-        metadata_matches = all(_metadata_equal(actual, expected) for actual, expected in (
-            (point.depth_um[[0, -1]], entry.depth_bounds_um),
-            (point.source_path, entry.source_path),
-            (point.scan_number, entry.scan_number),
-            (point.sample_position, entry.sample_position),
-            (point.energy_kev, entry.energy_kev),
-        ))
-        if not identity_matches or not metadata_matches:
+        found = (point.point_id, point.manifest_index, point.shape, point.dtype,
+                 tuple(float(value) for value in point.depth_um[[0, -1]]))
+        if found != (entry.point_id, entry.index, entry.shape, entry.dtype, entry.depth_bounds_um):
             point.close()
             raise InvalidScanFile(
                 f"{point.path} does not hold point {point_id!r} as the catalog describes it"
@@ -407,12 +439,13 @@ def validate_scan_file(path) -> ScanFileSummary:
     OSError
         If the file cannot be opened as HDF5.
     InvalidScanFile
-        If the format marker or version is wrong, including the retired
-        single-file layout; a dataset is missing or has the wrong dtype or
-        shape; catalog rows disagree in length; a status code is unknown, or a
-        finished or cancelled run has a pending or writing point; point IDs or
-        point paths are empty, unsafe, or repeat; or a catalog row is
-        inconsistent.
+        If the format marker or version is wrong; a root attribute or dataset
+        is missing or has the wrong dtype, enumerated type, shape, units, or
+        fill value; catalog rows disagree in length; a status code is
+        unknown, or a finished or cancelled run has a pending or writing
+        point; point IDs or point paths are empty, unsafe, or repeat; a
+        catalog row is inconsistent; or ``/point_files`` does not contain
+        exactly one link to each complete point.
 
     Notes
     -----
@@ -466,13 +499,26 @@ class PointHeader:
     depth_bounds_um: tuple[float, float]
 
 
+def _first(source, path: str):
+    """Return the first element of the dataset at ``path`` as a Python value."""
+    value = source[path][0]
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return value.item() if isinstance(value, np.generic) else value
+
+
+def _optional(source, path: str):
+    return _first(source, path) if path in source else None
+
+
 def validate_point(source: h5py.File) -> PointHeader:
     """Check the structure of an open point file with bounded reads.
 
-    Dataset dtypes and shapes are checked against the layout, the completion
-    marker must be set, and the depths must be finite and increasing. NeXus
-    classes, signals, axes, units, and internal depth links are checked. Pixel
-    values are not read.
+    Every dataset that lauelab adds is checked against the layout: presence
+    unless optional, dtype, shape, units, and fixed attributes. The
+    normalization datasets are present together or not at all, and the
+    depths must be finite and increasing. Metadata copied from the input is
+    not checked. Pixel values are not read.
     """
     check_point_format(source)
     label = f"point file {source.filename}"
@@ -485,60 +531,39 @@ def validate_point(source: h5py.File) -> PointHeader:
     n_depths, rows, columns = data.shape
     if min(n_depths, rows, columns) < 1:
         raise InvalidScanFile(f"{label}: '/entry1/data/data' is empty")
-    raw_data = source.get("entry1/reconstruction/first_raw/data")
-    if not isinstance(raw_data, h5py.Dataset):
-        raise InvalidScanFile(f"{label}: first_raw/data must be a dataset")
-    raw = raw_data.dtype
+    first_raw = layout.RECONSTRUCTION + "first_raw"
+    if not isinstance(source.get(first_raw), h5py.Dataset):
+        raise InvalidScanFile(f"{label}: dataset {first_raw!r} is missing")
+    raw = source[first_raw].dtype
     dims = {"n_depths": n_depths, "rows": rows, "columns": columns}
-    for path, spec in {**layout.POINT_SETTINGS_DATASETS, **layout.POINT_DATASETS}.items():
+    for path, spec in layout.POINT_DATASETS.items():
+        if spec.optional and path not in source:
+            continue
         shape = tuple(dims[value] if isinstance(value, str) else value for value in spec.shape)
-        dtype = layout.resolve_dtype(spec, stored=stored, input=raw)
+        dtype = spec.dtype if spec.dtype == layout.TEXT else layout.resolve_dtype(
+            spec, stored=stored, input=raw)
         dataset = _check_dataset(source, path, dtype, shape, label)
         for name, expected in {**({"units": spec.units} if spec.units else {}), **spec.attrs}.items():
             if not _metadata_equal(dataset.attrs.get(name), expected):
                 raise InvalidScanFile(f"{label}: {path} attribute {name!r} must be {expected!r}")
-    for path, attributes in layout.POINT_GROUP_ATTRIBUTES.items():
-        if path not in source or not isinstance(source[path], h5py.Group):
-            raise InvalidScanFile(f"{label}: {path!r} must be a group")
-        for name, expected in attributes.items():
-            if not _metadata_equal(source[path].attrs.get(name), expected):
-                raise InvalidScanFile(f"{label}: {path} attribute {name!r} must be {expected!r}")
-    for path in layout.POINT_DEPTH_LINKS:
-        if (not isinstance(source.get(path, getlink=True), h5py.HardLink)
-                or source[path].id != source["entry1/depth"].id):
-            raise InvalidScanFile(f"{label}: {path} must link to /entry1/depth")
-    if int(source["entry1/reconstruction/point/complete"][()]) != 1:
-        raise InvalidScanFile(f"{label}: the point is not complete")
-    point_id = _text(source["entry1/reconstruction/point/id"][()])
+    if len({path in source for path in layout.NORMALIZATION_DATASETS}) != 1:
+        raise InvalidScanFile(f"{label}: the normalization datasets must be written together")
+    point_id = _first(source, layout.RECONSTRUCTION + "point_id")
     if not point_id:
         raise InvalidScanFile(f"{label}: the point ID is empty")
     depth_um = source["entry1/depth"][...]
     if not np.isfinite(depth_um).all() or (np.diff(depth_um) <= 0).any():
         raise InvalidScanFile(f"{label}: depth_um must be finite and increasing")
-    index = int(source["entry1/reconstruction/point/manifest_index"][()])
+    index = _optional(source, layout.RECONSTRUCTION + "manifest_index")
+    if index is not None and index < 0:
+        raise InvalidScanFile(f"{label}: the manifest index is negative")
     return PointHeader(
         point_id=point_id,
-        manifest_index=None if index < 0 else index,
+        manifest_index=index,
         shape=(n_depths, rows, columns),
         dtype=stored,
         depth_bounds_um=(float(depth_um[0]), float(depth_um[-1])),
     )
-
-
-def _setting(source, path):
-    value = source[path][()]
-    if isinstance(value, bytes):
-        value = value.decode("utf-8")
-    elif isinstance(value, np.ndarray):
-        return tuple(value.tolist())
-    elif isinstance(value, np.generic):
-        value = value.item()
-    if path == "/entry1/reconstruction/settings/cosmic_filter":
-        return bool(value)
-    missing = layout.POINT_SETTINGS_DATASETS[path].attrs.get("missing")
-    if (missing == "nan" and np.isnan(value)) or (missing is not None and value == missing):
-        return None
-    return value
 
 
 class PointReader:
@@ -578,10 +603,15 @@ class PointReader:
     start, group : tuple of int
         Zero-based ``(x, y)`` frame origin in unbinned pixels and ``(x, y)``
         binning factors, as :meth:`lauelab.indexing.Indexer.index` takes them.
+        The detector fields are read from the input metadata copied into the
+        point file, with the defaults that reconstruction applied to the
+        input.
     norm_rescale : float
-        Factor applied to computed values before they were stored.
+        Factor applied to computed values before they were stored; 1 without
+        exponent normalization.
     norm_threshold : float or None
-        Exponent-normalization threshold that was used.
+        Exponent-normalization threshold that was used, or ``None`` without
+        exponent normalization.
     raw_slices : tuple of int
         Half-open range of input slices used for the raw reference images.
     source_path : str
@@ -594,9 +624,12 @@ class PointReader:
     energy_kev : float or None
         Incident energy in keV.
     settings : dict
-        Requested reconstruction settings by name, such as ``"depth_range"``
-        and ``"wire_edge"``, and ``"geometry_path"``. A setting that was not
-        given is ``None``.
+        Reconstruction settings used for this point by name, such as
+        ``"depth_range"`` and ``"wire_edge"``, and ``"detector"`` and
+        ``"geometry_path"``. Settings chosen automatically hold the value
+        chosen: ``"output_pixel_type"`` is the code of :attr:`dtype`,
+        ``"norm_threshold"`` the threshold used, and ``"rows_per_stripe"``
+        the stripe height used. A setting that does not apply is ``None``.
 
     Raises
     ------
@@ -604,7 +637,7 @@ class PointReader:
         If the file cannot be opened as HDF5.
     InvalidScanFile
         If the file is not a complete point file of a supported version,
-        including a scan catalog or a file in the retired single-file layout.
+        including a scan catalog.
     """
 
     def __init__(self, path) -> None:
@@ -624,24 +657,34 @@ class PointReader:
         self.shape = header.shape
         self.dtype = header.dtype
         self.depth_um = source["entry1/depth"][...]
-        self.detector_id = _text(source["entry1/reconstruction/detector/id"][()])
-        self.detector_size = tuple(int(value) for value in source["entry1/reconstruction/detector/size"][...])
-        self.start = tuple(int(value) for value in source["entry1/reconstruction/detector/roi_start"][...])
-        self.group = tuple(int(value) for value in source["entry1/reconstruction/detector/roi_group"][...])
-        self.norm_rescale = float(source["entry1/reconstruction/normalization/rescale"][()])
-        threshold = float(source["entry1/reconstruction/normalization/threshold"][()])
-        self.norm_threshold = None if np.isnan(threshold) else threshold
-        self.raw_slices = tuple(int(value) for value in source["entry1/reconstruction/acquisition/raw_slices"][...])
-        self.source_path = _text(source["entry1/reconstruction/acquisition/source_path"][()])
-        scan_number = int(source["entry1/reconstruction/acquisition/scan_number"][()])
-        self.scan_number = None if scan_number < 0 else scan_number
-        self.sample_position = tuple(float(value) for value in source["entry1/reconstruction/acquisition/sample_position"][...])
-        energy = float(source["entry1/reconstruction/acquisition/energy_kev"][()])
-        self.energy_kev = None if np.isnan(energy) else energy
+        geometry = read_image_geometry(source, *self.shape[1:])
+        detector_id = _scalar(source, "entry1/detector/ID", "")
+        self.detector_id = _text(detector_id)
+        self.detector_size = (geometry.nx_full, geometry.ny_full)
+        self.start, self.group = geometry.start, geometry.group
+        self.scan_number, self.sample_position, self.energy_kev = read_acquisition(source)
+        exponent, threshold, rescale = (_optional(source, path) for path in layout.NORMALIZATION_DATASETS)
+        self.norm_rescale = 1.0 if rescale is None else float(rescale)
+        self.norm_threshold = None if threshold is None else float(threshold)
+        group = layout.RECONSTRUCTION
+        self.raw_slices = tuple(int(value) for value in source[group + "raw_slices"][...])
+        self.source_path = _first(source, group + "source_path")
         self.settings = {
-            path.rsplit("/", 1)[1] if path.startswith("/entry1/reconstruction/settings/") else "geometry_path":
-            _setting(source, path)
-            for path in layout.POINT_SETTINGS_DATASETS if path != "/entry1/reconstruction/geometry/xml"
+            "detector": int(_first(source, group + "detector")),
+            "depth_range": tuple(float(value) for value in source[group + "depth_range"][...]),
+            "resolution": float(_first(source, group + "resolution")),
+            "wire_edge": _first(source, group + "wire_edge"),
+            "percent_brightest": float(_first(source, group + "percent_brightest")),
+            "normalization": _optional(source, group + "normalization"),
+            "norm_exponent": None if exponent is None else float(exponent),
+            "norm_threshold": self.norm_threshold,
+            "cosmic_filter": "entry1/microDiffraction/cosmic_filter" in source,
+            "frame_skip": int(_first(source, group + "frame_skip")),
+            "wire_skip": int(_first(source, group + "wire_skip")),
+            "output_pixel_type": pixel_type(self.dtype),
+            "rows_per_stripe": int(_first(source, group + "rows_per_stripe")),
+            "memory_limit_mb": int(_first(source, group + "memory_limit_mb")),
+            "geometry_path": _first(source, group + "geometry_path"),
         }
 
     def __enter__(self) -> "PointReader":
@@ -656,7 +699,7 @@ class PointReader:
 
     def geometry_xml(self) -> str:
         """Return the complete geometry XML used during reconstruction."""
-        return _text(self._file["entry1/reconstruction/geometry/xml"][()])
+        return _first(self._file, layout.RECONSTRUCTION + "geometry_xml")
 
     def frame(self, depth_index: int) -> np.ndarray:
         """Return the stored frame at zero-based ``depth_index``, shape ``(rows, columns)``."""
@@ -709,7 +752,7 @@ class PointReader:
         """
         if name not in REFERENCE_IMAGES:
             raise InputError(f"reference image must be one of {REFERENCE_IMAGES}; received {name!r}")
-        return self._file[f"entry1/reconstruction/{name}/data"][...]
+        return self._file[layout.RECONSTRUCTION + name][...]
 
     def depth_intensity(self) -> np.ndarray:
         """Return the sum of the stored pixels of each frame, shape ``(n_depths,)``.
@@ -717,7 +760,7 @@ class PointReader:
         The dtype is ``numpy.int64`` for integer pixels and ``numpy.float64``
         otherwise.
         """
-        return self._file["entry1/reconstruction/stored_depth_intensity/data"][...]
+        return self._file[layout.RECONSTRUCTION + "depth_intensity"][...]
 
     def computed_depth_intensity(self) -> np.ndarray:
         """Return the sum of each computed frame before scaling and conversion.
@@ -726,4 +769,4 @@ class PointReader:
         depth_intensity``. They differ from :meth:`depth_intensity` whenever
         storage changed a pixel.
         """
-        return self._file["entry1/reconstruction/computed_depth_intensity/data"][...]
+        return self._file[layout.RECONSTRUCTION + "computed_depth_intensity"][...]

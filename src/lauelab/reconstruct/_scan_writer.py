@@ -9,7 +9,8 @@ reader that already holds the file keeps its earlier snapshot.
 
 Each worker writes its own point file. Before computation, it creates all
 datasets in a private file, then fills them stripe by stripe through
-:class:`PointSink`, and sets ``/entry1/reconstruction/point/complete`` last.
+:class:`PointSink`, which writes the reductions last. The file is published
+only after it is closed and validated.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from lauelab._native import ffi, get_library
 from lauelab._publish import partial_path, publish_file
 
 from . import _scan_layout as layout
-from ._scan_layout import RunStatus
+from ._scan_layout import PointStatus, RunStatus
 from ._writer import PIXEL_DTYPES, _copy_metadata
 
 _F8 = np.dtype("<f8")
@@ -98,41 +99,30 @@ def store_stripe(values: np.ndarray, dtype, rescale: float = 1.0, n_threads: int
 
 
 def _create(group, path, spec, *, shape=None, dtype=None, data=None, **options):
-    dataset = group.create_dataset(
-        path.lstrip("/"), shape=shape, dtype=spec.dtype if dtype is None else dtype,
-        data=data, **options,
-    )
+    dtype = spec.dtype if dtype is None else dtype
+    if spec.fill is not None and h5py.check_string_dtype(np.dtype(dtype)) is None:
+        options["fillvalue"] = spec.fill
+    dataset = group.create_dataset(path.lstrip("/"), shape=shape, dtype=dtype, data=data, **options)
     set_units(dataset, spec.units)
     for name, value in spec.attrs.items():
         dataset.attrs[name] = value
     return dataset
 
 
-def settings_values(detector: int, settings: Mapping, geometry_path: str,
-                    geometry_xml: str) -> dict:
-    """Return the ``SETTINGS_DATASETS`` values for one scan or point.
+def parameter_values(detector: int, settings: Mapping) -> dict:
+    """Return the ``/parameters`` values of a scan catalog.
 
     ``settings`` holds the :class:`~lauelab.reconstruct.Reconstructor` keyword
-    arguments of a prepared task.
+    arguments of a prepared task. A setting that was not given is stored as
+    its fill value.
     """
-    return {
-        "/settings/detector": detector,
-        "/settings/depth_range": settings["depth_range"],
-        "/settings/resolution": settings["resolution"],
-        "/settings/wire_edge": settings["wire_edge"],
-        "/settings/percent_brightest": settings["percent_brightest"],
-        "/settings/normalization": settings["normalization"] or "",
-        "/settings/norm_exponent": _missing(settings["norm_exponent"], np.nan),
-        "/settings/norm_threshold": _missing(settings["norm_threshold"], np.nan),
-        "/settings/cosmic_filter": int(settings["cosmic_filter"]),
-        "/settings/frame_skip": settings["frame_skip"],
-        "/settings/wire_skip": settings["wire_skip"],
-        "/settings/output_pixel_type": _missing(settings["output_pixel_type"], -1),
-        "/settings/rows_per_stripe": _missing(settings["rows_per_stripe"], -1),
-        "/settings/memory_limit_mb": settings["memory_limit_mb"],
-        "/geometry/path": geometry_path,
-        "/geometry/xml": geometry_xml,
-    }
+    values = {}
+    for path, spec in layout.SCAN_DATASETS.items():
+        if path.startswith("/parameters/"):
+            name = path.rsplit("/", 1)[1]
+            value = detector if name == "detector" else settings[name]
+            values[path] = spec.fill if value is None else value
+    return values
 
 
 def native_version() -> str:
@@ -140,8 +130,9 @@ def native_version() -> str:
     return ffi.string(get_library().laue_version()).decode()
 
 
-def write_catalog(path: Path, *, created: str, run_status: RunStatus,
-                  run_values: Mapping, catalog: Mapping, replace: bool) -> None:
+def write_catalog(path: Path, *, created: str, run_status: RunStatus, native_version: str,
+                  parameters: Mapping, geometry_path: str, geometry_xml: str,
+                  points: Mapping, replace: bool) -> None:
     """Publish one complete catalog snapshot at ``path``.
 
     Parameters
@@ -152,10 +143,14 @@ def write_catalog(path: Path, *, created: str, run_status: RunStatus,
         Creation time of the scan, kept by every snapshot.
     run_status
         Run status of this snapshot.
-    run_values
-        Values of ``SETTINGS_DATASETS`` and ``/run/native_version``.
-    catalog
-        Values of every ``CATALOG_DATASETS`` entry, one row per point.
+    native_version
+        Version of the native library that prepared the scan.
+    parameters
+        Values of the ``/parameters`` datasets, from :func:`parameter_values`.
+    geometry_path, geometry_xml
+        Geometry file path as given, and its complete text.
+    points
+        Values of every ``POINT_COLUMNS`` entry, one row per point.
     replace
         ``False`` for the first snapshot, which refuses to replace an existing
         file; ``True`` for later snapshots.
@@ -175,13 +170,27 @@ def write_catalog(path: Path, *, created: str, run_status: RunStatus,
     with h5py.File(partial, "w") as target:
         write_root_attributes(target, format_name=layout.SCAN_FORMAT,
                               version=layout.SCAN_VERSION, created=created)
-        values = {**run_values, "/run/status": int(run_status)}
-        for name, spec in {**layout.SCAN_RUN_DATASETS, **layout.SETTINGS_DATASETS}.items():
+        target.attrs["program"] = layout.PROGRAM
+        target.attrs["native_version"] = native_version
+        target.attrs.create("status", int(run_status), dtype=layout.RUN_STATUS_TYPE)
+        values = {**parameters, "/geometry/xml": geometry_xml}
+        for name, spec in layout.SCAN_DATASETS.items():
             _create(target, name, spec, data=np.asarray(values[name], dtype=spec.dtype))
-        for name, spec in layout.CATALOG_DATASETS.items():
-            _create(target, name, spec, data=np.asarray(catalog[name], dtype=spec.dtype))
+        target["geometry"].attrs["path"] = geometry_path
+        for name, spec in layout.POINT_COLUMNS.items():
+            _create(target, name, spec, data=np.asarray(points[name], dtype=spec.dtype))
+        links = target.create_group(layout.POINT_LINKS)
+        for point_path, status in zip(points["/points/paths"], points["/points/statuses"]):
+            if status == PointStatus.COMPLETE:
+                links[Path(point_path).stem] = h5py.ExternalLink(point_path, "/")
     validate_scan_file(partial)
     publish_file(partial, path, overwrite=replace)
+
+
+def _text(value: str) -> np.ndarray:
+    """Return ``value`` as a ``(1,)`` fixed-length UTF-8 array."""
+    encoded = value.encode("utf-8")
+    return np.array([encoded], dtype=h5py.string_dtype("utf-8", max(1, len(encoded))))
 
 
 def write_point_metadata(file: h5py.File, task, *, info, depth_um, output_type: int, first_raw,
@@ -203,53 +212,54 @@ def write_point_metadata(file: h5py.File, task, *, info, depth_um, output_type: 
     first_raw
         First selected raw frame, already read from the input.
     source_metadata
-        Input metadata to preserve at its original paths.
+        Input metadata to copy, as the reconstruction executable copies it.
     source_stat
         ``os.stat_result`` of the input, or ``None``.
     num_threads
         OpenMP threads of the reconstruction.
     """
-    _copy_metadata(source_metadata, file, exclude_entry=("depth",), exclude_data=("depth",))
-    # Acquisition axes describe the raw frames, not the reconstructed stack.
-    for name in list(file["entry1/data"].attrs):
-        if name in ("signal", "axes", "default", "auxiliary_signals") or name.endswith("_indices"):
-            del file["entry1/data"].attrs[name]
+    _copy_metadata(source_metadata, file, exclude_entry=("depth",))
     write_root_attributes(file, format_name=layout.POINT_FORMAT, version=layout.POINT_VERSION)
-    for path, attributes in layout.POINT_GROUP_ATTRIBUTES.items():
-        file.require_group(path).attrs.update(attributes)
     _, rows, columns = info.shape
     stored = PIXEL_DTYPES[output_type]
-    geometry = info.image_geometry
+    settings = task.settings
+    reconstruction = layout.RECONSTRUCTION
     values = {
-        **{"/entry1/reconstruction" + path: value for path, value in
-           settings_values(task.detector, task.settings, task.geometry_path, task.geometry_xml).items()},
-        "/entry1/reconstruction/program": "lauelab",
-        "/entry1/reconstruction/version": file.attrs["lauelab_version"],
-        "/entry1/reconstruction/date": file.attrs["created"],
-        "/entry1/reconstruction/point/id": task.point_id,
-        "/entry1/reconstruction/point/manifest_index": _missing(task.index, -1),
-        "/entry1/reconstruction/point/complete": 0,
-        "/entry1/reconstruction/point/native_version": native_version(),
-        "/entry1/reconstruction/execution/num_threads": num_threads,
-        "/entry1/reconstruction/execution/rows_per_stripe": 0,
-        "/entry1/reconstruction/acquisition/source_path": task.source,
-        "/entry1/reconstruction/acquisition/source_size": -1 if source_stat is None else source_stat.st_size,
-        "/entry1/reconstruction/acquisition/source_mtime_ns": -1 if source_stat is None else source_stat.st_mtime_ns,
-        "/entry1/reconstruction/acquisition/scan_number": _missing(info.scan_number, -1),
-        "/entry1/reconstruction/acquisition/sample_position": info.sample_position,
-        "/entry1/reconstruction/acquisition/energy_kev": _missing(info.energy_kev, np.nan),
         "/entry1/depth": depth_um,
-        "/entry1/reconstruction/detector/id": _detector_id(source_metadata),
-        "/entry1/reconstruction/detector/size": (geometry.nx_full, geometry.ny_full),
-        "/entry1/reconstruction/detector/roi_start": geometry.start,
-        "/entry1/reconstruction/detector/roi_group": geometry.group,
-        "/entry1/reconstruction/normalization/threshold": np.nan,
-        "/entry1/reconstruction/normalization/rescale": 1.0,
-        "/entry1/reconstruction/first_raw/data": first_raw,
-        "/entry1/reconstruction/acquisition/raw_slices": task.raw_slices,
+        **{reconstruction + name: settings[name] for name in (
+            "depth_range", "resolution", "wire_edge", "percent_brightest", "frame_skip",
+            "wire_skip", "memory_limit_mb",
+        )},
+        reconstruction + "detector": task.detector,
+        reconstruction + "geometry_path": task.geometry_path,
+        reconstruction + "geometry_xml": task.geometry_xml,
+        reconstruction + "point_id": task.point_id,
+        reconstruction + "source_path": task.source,
+        reconstruction + "raw_slices": task.raw_slices,
+        reconstruction + "native_version": native_version(),
+        reconstruction + "num_threads": num_threads,
+        reconstruction + "first_raw": first_raw,
     }
+    if settings["normalization"]:
+        values[reconstruction + "normalization"] = settings["normalization"]
+    if task.index is not None:
+        values[reconstruction + "manifest_index"] = task.index
+    if source_stat is not None:
+        values[reconstruction + "source_size"] = source_stat.st_size
+        values[reconstruction + "source_mtime_ns"] = source_stat.st_mtime_ns
+    if settings["cosmic_filter"]:
+        values["/entry1/microDiffraction/cosmic_filter"] = 1
+    if settings["norm_exponent"] is not None:
+        # The sink records the threshold and rescale that are used.
+        values.update(zip(layout.NORMALIZATION_DATASETS, (settings["norm_exponent"], np.nan, np.nan)))
     dims = {"n_depths": len(depth_um), "rows": rows, "columns": columns}
-    for path, spec in {**layout.POINT_SETTINGS_DATASETS, **layout.POINT_DATASETS}.items():
+    for path, spec in layout.POINT_DATASETS.items():
+        if spec.optional and path not in values:
+            continue
+        if spec.dtype == layout.TEXT:
+            text = _text(values[path])
+            _create(file, path, spec, dtype=text.dtype, data=text)
+            continue
         dtype = layout.resolve_dtype(spec, stored=stored, input=info.dtype)
         shape = tuple(dims[name] if isinstance(name, str) else name for name in spec.shape)
         if path == "/entry1/data/data":
@@ -257,11 +267,9 @@ def write_point_metadata(file: h5py.File, task, *, info, depth_um, output_type: 
                     chunks=tuple(min(chunk, size) for chunk, size in zip(DATA_CHUNKS, shape)),
                     **COMPRESSION[task.compression])
         elif path in values:
-            _create(file, path, spec, dtype=dtype, data=np.asarray(values[path], dtype=dtype))
+            _create(file, path, spec, dtype=dtype, data=np.asarray(values[path], dtype=dtype).reshape(shape))
         else:
             _create(file, path, spec, shape=shape, dtype=dtype)
-    for path in layout.POINT_DEPTH_LINKS:
-        file[path] = file["entry1/depth"]
 
 
 class PointSink:
@@ -302,13 +310,18 @@ class PointSink:
     def _begin(self, *, depth_um, shape, output_type, threshold, rescale) -> None:
         if self._data.shape != (len(depth_um), *shape) or self._data.dtype != PIXEL_DTYPES[output_type]:
             raise ValueError("the point file does not match the reconstruction")
+        normalized = layout.NORMALIZATION_DATASETS[1] in self._file
+        if normalized != (threshold is not None):
+            raise ValueError("the point file does not match the normalization")
         accumulator = layout.accumulator_dtype(self._data.dtype)
         self._depth_intensity = np.zeros(len(depth_um), dtype=accumulator)
         self._sum_reconstructed = np.zeros(shape, dtype=accumulator)
-        self._sum_raw = np.zeros(shape, dtype=self._file["entry1/reconstruction/sum_raw/data"].dtype)
+        self._sum_raw = np.zeros(shape, dtype=self._file[layout.RECONSTRUCTION + "sum_raw"].dtype)
         self._rescale = rescale
-        self._file["entry1/reconstruction/normalization/threshold"][()] = np.nan if threshold is None else threshold
-        self._file["entry1/reconstruction/normalization/rescale"][()] = rescale
+        if normalized:
+            _, threshold_path, rescale_path = layout.NORMALIZATION_DATASETS
+            self._file[threshold_path][...] = threshold
+            self._file[rescale_path][...] = rescale
 
     def raw(self, row0, stripe) -> None:
         # A float64 sum of integers of at most 4 bytes is exact below 2**53.
@@ -332,14 +345,14 @@ class PointSink:
     def finish(self, **kwargs) -> None:
         self._guard(self._finish, **kwargs)
 
-    def _finish(self, *, totals, stripe_rows, **_) -> None:
-        file = self._file
-        file["entry1/reconstruction/sum_raw/data"][...] = self._sum_raw
-        file["entry1/reconstruction/sum_reconstructed/data"][...] = self._sum_reconstructed
-        file["entry1/reconstruction/stored_depth_intensity/data"][...] = self._depth_intensity
-        file["entry1/reconstruction/computed_depth_intensity/data"][...] = totals
-        file["entry1/reconstruction/execution/rows_per_stripe"][()] = stripe_rows
-        file["entry1/reconstruction/point/complete"][()] = 1
+    def _finish(self, *, totals, stripe_rows, elapsed, **_) -> None:
+        group = self._file[layout.RECONSTRUCTION]
+        group["sum_raw"][...] = self._sum_raw
+        group["sum_reconstructed"][...] = self._sum_reconstructed
+        group["depth_intensity"][...] = self._depth_intensity
+        group["computed_depth_intensity"][...] = totals
+        group["rows_per_stripe"][...] = stripe_rows
+        group["elapsed_seconds"][...] = elapsed
 
     def close(self) -> None:
         pass
@@ -347,13 +360,3 @@ class PointSink:
 
 def _missing(value, fill):
     return fill if value is None else value
-
-
-def _detector_id(source) -> str:
-    if "entry1/detector/ID" not in source:
-        return ""
-    values = np.asarray(source["entry1/detector/ID"]).ravel()
-    if not len(values):
-        return ""
-    value = values[0]
-    return value.decode(errors="replace") if isinstance(value, bytes) else str(value)

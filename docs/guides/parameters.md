@@ -2,7 +2,7 @@
 
 {class}`~lauelab.indexing.PeakParams` controls peak detection and fitting. {class}`~lauelab.indexing.IndexParams` controls orientation indexing. Both are immutable dataclasses that the `Indexer` validates during construction.
 
-`cosmic_filter` must be `False` for indexing. `Indexer`, `index_frame`, and `lauego` reject `True` because they do not implement cosmic-ray filtering. Earlier versions accepted the setting and recorded it without filtering the image. Historical result files retain that recorded value when loaded; it does not establish that filtering occurred. The separate reconstruction cosmic-ray filter remains supported.
+`cosmic_filter` must be `False` for indexing. `Indexer`, `index_frame`, and `lauego` reject `True` because they do not implement cosmic-ray filtering. A results file can contain `cosmic_filter=True` in its run parameters; that value is not evidence that the image was filtered. The reconstruction cosmic-ray filter is separate and is supported.
 
 ## Start with the defaults
 

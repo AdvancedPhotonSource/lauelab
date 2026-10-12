@@ -17,7 +17,7 @@ from conftest import requires_liblaue
 from lauelab import partial_path
 from lauelab.indexing import InputError, InvalidScanFile, ReconstructionError
 from lauelab.reconstruct import (
-    PointReader, Reconstructor, ScanReader, prepare_scan, reconstruct_point,
+    PointReader, Reconstructor, ScanReader, find_executable, prepare_scan, reconstruct_point,
     validate_scan_file,
 )
 from lauelab.reconstruct import _scan_layout as layout
@@ -26,7 +26,7 @@ from lauelab.reconstruct import scan as scan_module
 from lauelab.reconstruct._scan_writer import store_stripe
 from lauelab.reconstruct._writer import PIXEL_DTYPES
 from tests.data.reconstruction.generate_reference import (
-    DEPTH_RANGE_UM, GEOMETRY_FILE, VARIANTS, write_input_file,
+    DEPTH_RANGE_UM, GEOMETRY_FILE, VARIANTS, run_reconstruction, write_input_file,
 )
 from tests.data.reconstruction_contract import fixtures
 
@@ -338,40 +338,38 @@ def published(tmp_path_factory):
 def test_point_file_follows_the_layout_table(published):
     scan, work = published
     source = work / "in/a/Twin2_wire_1.h5"
+    group = layout.RECONSTRUCTION
     with h5py.File(scan.directory / "points/Twin2_wire_1.h5") as handle:
         assert handle.attrs["format"] == layout.POINT_FORMAT
         assert handle.attrs["version"] == layout.POINT_VERSION
-        tables = {**layout.POINT_SETTINGS_DATASETS, **layout.POINT_DATASETS}
         found = {"/entry1/data/data", "/entry1/depth"}
-        handle["entry1/reconstruction"].visititems(
-            lambda name, node: found.add("/entry1/reconstruction/" + name)
-            if isinstance(node, h5py.Dataset) and not name.endswith("/depth") else None
-        )
-        assert found == set(tables)
-        for path, spec in tables.items():
-            dataset = handle[path]
-            assert dataset.attrs.get("units") == spec.units, path
-            for name, value in spec.attrs.items():
-                assert dataset.attrs[name] == value, path
+        handle[group].visit(lambda name: found.add(group + name))
+        absent = {path for path, spec in layout.POINT_DATASETS.items() if spec.optional} - found
+        assert found == set(layout.POINT_DATASETS) - absent
+        # Neither the cosmic filter nor normalization ran.
+        assert absent == {group + "normalization", "/entry1/microDiffraction/cosmic_filter",
+                          *layout.NORMALIZATION_DATASETS}
+        for path in found:
+            spec, dataset = layout.POINT_DATASETS[path], handle[path]
+            assert dict(dataset.attrs) == {**({"units": spec.units} if spec.units else {}), **spec.attrs}, path
+            if spec.dtype == layout.TEXT:
+                info = h5py.check_string_dtype(dataset.dtype)
+                assert (info.encoding, dataset.shape) == ("utf-8", (1,)), path
         assert handle["entry1/data/data"].chunks == (4, 128, 128)
         assert "entry1/detector/Nx" in handle
         assert "entry1/wire" not in handle
         assert "source" not in handle
-        assert handle["entry1/reconstruction/point/id"][()].decode() == "Twin2_wire_1"
-        assert handle["entry1/reconstruction/point/manifest_index"][()] == 0
-        assert handle["entry1/reconstruction/point/complete"][()] == 1
-        assert handle["entry1/reconstruction/execution/num_threads"][()] == 2
-        assert handle["entry1/reconstruction/execution/rows_per_stripe"][()] == 31
-        assert handle["entry1/reconstruction/acquisition/source_path"][()].decode() == os.fspath(source)
-        assert handle["entry1/reconstruction/acquisition/source_size"][()] == source.stat().st_size
-        np.testing.assert_array_equal(handle["entry1/reconstruction/acquisition/sample_position"], [1.5, 0.0, 0.0])
-        assert handle["entry1/reconstruction/geometry/xml"][()].decode() == GEOMETRY_FILE.read_text()
-        assert handle["entry1/reconstruction/settings/wire_edge"][()].decode() == "both"
-        assert handle["entry1/reconstruction/settings/output_pixel_type"][()] == -1
-        assert handle["entry1/reconstruction/settings/rows_per_stripe"][()] == 31
-    with h5py.File(scan.path) as catalog, h5py.File(scan.directory / "points/Twin2_wire_2.h5") as point:
-        for path in layout.SETTINGS_DATASETS:
-            np.testing.assert_array_equal(catalog[path][()], point["/entry1/reconstruction" + path][()], err_msg=path)
+        assert handle["entry1/sample/sampleX"][0] == 1.5
+        assert handle[group + "point_id"][0] == b"Twin2_wire_1"
+        assert handle[group + "manifest_index"][0] == 0
+        assert handle[group + "num_threads"][0] == 2
+        assert handle[group + "rows_per_stripe"][0] == 31
+        assert handle[group + "elapsed_seconds"][0] > 0
+        assert handle[group + "source_path"][0].decode() == os.fspath(source)
+        assert handle[group + "source_size"][0] == source.stat().st_size
+        assert handle[group + "source_mtime_ns"][0] == source.stat().st_mtime_ns
+        assert handle[group + "geometry_xml"][0].decode() == GEOMETRY_FILE.read_text()
+        assert handle[group + "wire_edge"][0] == b"both"
 
 
 def test_recorded_points_are_complete_in_the_catalog(published):
@@ -494,7 +492,7 @@ def test_scan_reader_refuses_incomplete_points_and_mismatched_files(tmp_path):
         catalog.point("a")
 
 
-def test_point_reader_refuses_catalogs_retired_files_and_incomplete_points(published, tmp_path):
+def test_point_reader_refuses_catalogs_retired_files_and_damaged_points(published, tmp_path):
     scan, _ = published
     with pytest.raises(InvalidScanFile, match="is a reconstruction-scan catalog, not a point file"):
         PointReader(scan.path)
@@ -505,15 +503,10 @@ def test_point_reader_refuses_catalogs_retired_files_and_incomplete_points(publi
         PointReader(retired)
     with pytest.raises(InvalidScanFile, match="not a 'lauelab-reconstruction-point' file"):
         PointReader(_source(tmp_path / "in"))
-    incomplete = shutil.copy(scan.directory / "points/Twin2_wire_1.h5", tmp_path / "incomplete.h5")
-    with h5py.File(incomplete, "r+") as handle:
-        handle["entry1/reconstruction/point/complete"][()] = 0
-    with pytest.raises(InvalidScanFile, match="not complete"):
-        PointReader(incomplete)
     damaged = shutil.copy(scan.directory / "points/Twin2_wire_1.h5", tmp_path / "damaged.h5")
     with h5py.File(damaged, "r+") as handle:
-        del handle["entry1/reconstruction/stored_depth_intensity/data"]
-    with pytest.raises(InvalidScanFile, match="entry1/reconstruction/stored_depth_intensity/data"):
+        del handle["entry1/reconstruction/depth_intensity"]
+    with pytest.raises(InvalidScanFile, match="entry1/reconstruction/depth_intensity"):
         PointReader(damaged)
 
 
@@ -747,18 +740,14 @@ def test_missing_acquisition_values_survive_task_transport_and_recording(tmp_pat
             assert point.scan_number is None
 
 
-@pytest.mark.parametrize("field", ["entry1/depth", "entry1/reconstruction/acquisition/sample_position",
-                                    "entry1/reconstruction/acquisition/energy_kev", "entry1/reconstruction/acquisition/scan_number"])
-def test_scan_reader_rejects_scientific_metadata_that_disagrees_with_catalog(tmp_path, field):
+def test_scan_reader_rejects_a_point_whose_depths_disagree_with_the_catalog(tmp_path):
     source = _source(tmp_path / "in")
     point_path = _point(tmp_path / "scan", source)
     with h5py.File(point_path, "r+") as file:
-        file[field][...] = file[field][...] + 100
+        file["entry1/depth"][...] = file["entry1/depth"][...] + 100
     with ScanReader(tmp_path / "scan/scan.h5") as catalog:
         with pytest.raises(InvalidScanFile, match="as the catalog describes"):
             catalog.point(source.stem)
-
-
 
 
 # --- Memory budget -----------------------------------------------------------
@@ -814,78 +803,123 @@ def test_explicit_stripe_size_cannot_bypass_budget(tmp_path):
     assert "memory_limit_mb cannot hold 128 stripe row" in outcome.error
 
 
-# --- NeXus structure and acquisition metadata ---------------------------------
+# --- Executable layout and acquisition metadata ---------------------------------
+
+def _tree(path):
+    """Return every object outside ``/entry1/reconstruction`` with its type and attributes."""
+    def attributes(node):
+        return {name: (np.asarray(value).dtype.str, np.asarray(value).tolist())
+                for name, value in node.attrs.items()}
+
+    def visit(name, node):
+        if not name.startswith("entry1/reconstruction"):
+            tree[name] = ((node.dtype.str, node.shape, attributes(node))
+                          if isinstance(node, h5py.Dataset) else attributes(node))
+
+    with h5py.File(path) as file:
+        tree = {"/": attributes(file)}
+        file.visititems(visit)
+        values = {name: file[name][...].tolist() for name in tree
+                  if name.startswith("entry1/microDiffraction/")}
+    return tree, values
 
 
-def test_nexus_default_signal_axes_and_reference_groups(published):
-    scan, _ = published
-    with h5py.File(scan.directory / "points/Twin2_wire_1.h5") as file:
-        # Discover the stack through NeXus attributes rather than lauelab paths.
-        entry = file[file.attrs["default"]]
-        assert entry.attrs["NX_class"] == "NXentry"
-        data = entry[entry.attrs["default"]]
-        assert data.attrs["NX_class"] == "NXdata"
-        signal = data[data.attrs["signal"]]
-        assert signal.shape == (51, 128, 128)
-        assert list(data.attrs["axes"]) == ["depth", ".", "."]
-        np.testing.assert_array_equal(data["depth"], np.arange(-25, 26))
-        assert data["depth"].attrs["units"] == "um"
-        assert data["depth"].id == entry["depth"].id
-        process = entry["reconstruction"]
-        assert process.attrs["NX_class"] == "NXprocess"
-        assert process["program"].asstr()[()] == "lauelab"
-        assert process["version"].asstr()[()] == file.attrs["lauelab_version"]
-        assert process["date"].asstr()[()] == file.attrs["created"]
-        for name in ("first_raw", "sum_raw", "sum_reconstructed",
-                     "stored_depth_intensity", "computed_depth_intensity"):
-            group = process[name]
-            assert group.attrs["NX_class"] == "NXdata"
-            values = group[group.attrs["signal"]]
-            if values.ndim == 1:
-                assert list(group.attrs["axes"]) == ["depth"]
-                assert group["depth"].id == entry["depth"].id
-                assert values.shape == entry["depth"].shape
-            else:
-                assert list(group.attrs["axes"]) == [".", "."]
-                assert values.shape == signal.shape[1:]
+@pytest.mark.integration
+@pytest.mark.parametrize("variant", [None, *VARIANTS])
+def test_point_file_has_the_executable_layout(tmp_path, variant):
+    """Apart from its own group, a point file is the executable's output with every depth."""
+    try:
+        executable = find_executable()
+    except FileNotFoundError:
+        pytest.skip("Reconstruction executable not available")
+    source = _source(tmp_path, variant)
+    result = run_reconstruction(executable, source, tmp_path / "c" / "recon_", variant=variant)
+    assert result.success, result.error
+    point = _standalone(source, tmp_path / "point.h5", variant, memory_limit_mb=256)
+    assert point.status == "complete", point.error
+
+    (expected, expected_values), (found, found_values) = _tree(result.output_files[0]), _tree(point.output)
+    assert found_values == expected_values
+    root = found.pop("/")
+    assert {name: root.pop(name) for name in ("format", "version", "lauelab_version", "created")}
+    assert root == expected.pop("/")
+    dtype, shape, attributes = found.pop("entry1/data/data")
+    assert (dtype, shape[1:], attributes) == expected.pop("entry1/data/data")
+    # The executable keeps an input's depth dataset and its attributes; the
+    # synthetic input has one without units. A point file states its unit.
+    dtype, shape, attributes = found.pop("entry1/depth")
+    assert (dtype, shape, attributes) == ("<f8", (51,), {"units": ("<U6", "micron")})
+    assert expected.pop("entry1/depth") == ("<f8", (1,), {})
+    assert found == expected
 
 
-def test_point_preserves_metadata_paths_and_replaces_raw_axes(tmp_path):
+def test_point_copies_input_metadata_as_the_executable_does(tmp_path):
     source = _source(tmp_path / "in")
     with h5py.File(source, "r+") as file:
         file.attrs["operator_note"] = "keep root metadata"
-        file["entry1"].attrs["default"] = "old_data"
+        file["entry1"].attrs["NX_class"] = "NXentry"
         file["entry1/depth"][...] = [999.0]
-        group = file["entry1/data"]
-        group.attrs.update(signal="old_signal", axes=["wire", ".", "."],
-                           wire_indices=[0], auxiliary_signals=["old_signal"])
-        group.create_dataset("depth", data=[123.0])
-        group.attrs["acquisition_note"] = "keep group metadata"
+        file["entry1/data"].attrs["acquisition_note"] = "keep group metadata"
+        file["entry1/data"].create_dataset("timing", data=[1.0, 2.0])
         file.create_dataset("entry1/user_annotation", data="science note")
     path = _point(tmp_path / "scan", source)
     with h5py.File(source) as raw, h5py.File(path) as point:
         assert point.attrs["operator_note"] == raw.attrs["operator_note"]
+        assert point.attrs["file_time"] == raw.attrs["file_time"]
+        assert point["entry1"].attrs["NX_class"] == "NXentry"
         assert point["entry1/user_annotation"].asstr()[()] == "science note"
         np.testing.assert_array_equal(point["entry1/detector/Nx"], raw["entry1/detector/Nx"])
+        assert dict(point["entry1/data"].attrs) == {"acquisition_note": "keep group metadata"}
+        np.testing.assert_array_equal(point["entry1/data/timing"], [1.0, 2.0])
         assert "entry1/wire" not in point
         assert "source" not in point
-        assert point["entry1/data"].attrs["acquisition_note"] == "keep group metadata"
-        assert "wire_indices" not in point["entry1/data"].attrs
-        assert "auxiliary_signals" not in point["entry1/data"].attrs
-        assert point["entry1"].attrs["default"] == "data"
         np.testing.assert_array_equal(point["entry1/depth"], np.arange(-25, 26))
-        assert point["entry1/data/depth"].id == point["entry1/depth"].id
+
+
+def test_point_reader_reads_acquisition_metadata_from_the_copied_tree(tmp_path):
+    source = _source(tmp_path / "in")
+    with h5py.File(source, "r+") as file:
+        file["entry1/sample/sampleY"][...] = -2.0
+        del file["entry1/detector/startx"]
+        del file["entry1/detector/starty"]
+    with PointReader(_point(tmp_path / "scan", source)) as point:
+        assert point.sample_position == (0.0, -2.0, 0.0)
+        assert (point.scan_number, point.energy_kev) == (1, 20.0)
+        # A missing origin is (0, 0), as reconstruction assumed.
+        assert (point.detector_size, point.start, point.group) == ((2048, 2048), (0, 0), (16, 16))
+        assert point.detector_id == "PE1621 723-3335"
+
+
+@pytest.mark.parametrize("variant", ["cosmic", "norm_exponent"])
+def test_settings_report_the_values_the_reconstruction_used(tmp_path, variant):
+    source = _source(tmp_path / "in", variant)
+    path = _standalone(source, tmp_path / "point.h5", variant, output_pixel_type=None,
+                       rows_per_stripe=None).output
+    with PointReader(path) as point:
+        settings = point.settings
+        assert list(settings) == [
+            "detector", "depth_range", "resolution", "wire_edge", "percent_brightest",
+            "normalization", "norm_exponent", "norm_threshold", "cosmic_filter", "frame_skip",
+            "wire_skip", "output_pixel_type", "rows_per_stripe", "memory_limit_mb", "geometry_path",
+        ]
+        # The automatic pixel type keeps the uint16 input type.
+        assert settings["output_pixel_type"] == 3 and point.dtype == np.uint16
+        assert settings["rows_per_stripe"] == 128
+        assert settings["cosmic_filter"] is (variant == "cosmic")
+        if variant == "norm_exponent":
+            assert settings["norm_exponent"] == 0.5
+            assert settings["norm_threshold"] == point.norm_threshold > 0
+            assert point.norm_rescale == 255.0
+        else:
+            assert settings["norm_exponent"] is settings["norm_threshold"] is None
 
 
 @pytest.mark.parametrize("path,name,value", [
-    ("entry1", "NX_class", "NXcollection"),
-    ("entry1", "default", "missing"),
-    ("entry1/data", "signal", "missing"),
-    ("entry1/data", "axes", [".", ".", "depth"]),
-    ("entry1/depth", "units", "mm"),
-    ("entry1/reconstruction/sum_raw", "signal", "missing"),
+    ("entry1/data/data", "signal", 2),
+    ("entry1/depth", "units", "um"),
+    ("entry1/reconstruction/memory_limit_mb", "units", "MB"),
 ])
-def test_point_validator_rejects_incorrect_nexus_metadata(published, tmp_path, path, name, value):
+def test_point_validator_rejects_incorrect_attributes(published, tmp_path, path, name, value):
     scan, _ = published
     copy = tmp_path / "point.h5"
     shutil.copyfile(scan.directory / "points/Twin2_wire_1.h5", copy)
@@ -895,26 +929,28 @@ def test_point_validator_rejects_incorrect_nexus_metadata(published, tmp_path, p
         PointReader(copy)
 
 
-def test_point_validator_requires_shared_depth_coordinates(published, tmp_path):
-    scan, _ = published
-    copy = tmp_path / "point.h5"
-    shutil.copyfile(scan.directory / "points/Twin2_wire_1.h5", copy)
-    with h5py.File(copy, "r+") as file:
-        del file["entry1/data/depth"]
-        file["entry1/data/depth"] = file["entry1/depth"][...]
-    with pytest.raises(InvalidScanFile, match="must link to /entry1/depth"):
-        PointReader(copy)
+def test_point_validator_requires_the_normalization_fields_together(tmp_path):
+    source = _source(tmp_path / "in", "norm_exponent")
+    path = _standalone(source, tmp_path / "point.h5", "norm_exponent").output
+    with h5py.File(path, "r+") as file:
+        del file["entry1/microDiffraction/norm_rescale"]
+    with pytest.raises(InvalidScanFile, match="written together"):
+        PointReader(path)
 
 
-def test_preparation_rejects_reserved_reconstruction_path(tmp_path):
+@pytest.mark.parametrize("reserved", layout.RESERVED_INPUT_PATHS)
+def test_preparation_rejects_inputs_that_hold_reconstruction_output(tmp_path, reserved):
     source = _source(tmp_path / "in")
     with h5py.File(source, "r+") as file:
-        file.create_group("entry1/reconstruction")
+        if reserved == "/entry1/reconstruction":
+            file.create_group(reserved)
+        else:
+            file.create_dataset(reserved, data=[1])
     with _prepare([source], tmp_path / "scan") as scan:
         assert not scan.tasks
-        assert "reserved group" in ScanReader(scan.path).points[0].error
+        assert "which reconstruction writes" in ScanReader(scan.path).points[0].error
         scan.finish()
-    with pytest.raises(InputError, match="reserved group"):
+    with pytest.raises(InputError, match=f"input contains {reserved}"):
         _standalone(source, tmp_path / "point.h5")
     assert not (tmp_path / "point.h5").exists()
 

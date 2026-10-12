@@ -4,7 +4,7 @@ A wire-scan point is a stack of detector frames recorded while a wire moves acro
 
 ## Choose the inputs
 
-Reconstruction needs a geometry file with a complete wire section, a detector slot, and a depth grid. Geometry files without a wire section load for indexing but raise {class}`~lauelab.indexing.InputError` here.
+Reconstruction needs a geometry file with a complete wire section, a detector slot, and a depth grid. A geometry file without a wire section can be loaded for indexing, but reconstruction raises {class}`~lauelab.indexing.InputError` for it.
 
 ```{warning}
 `detector` is a physical slot in the geometry file, not an ordinal position among active detectors. See [Geometry](geometry.md) before selecting a slot.
@@ -33,7 +33,7 @@ See the [reference](../reference/reconstruction.md) for accepted ranges and the 
 
 ## Reconstruct one point
 
-Create the {class}`~lauelab.reconstruct.Reconstructor` once and reuse it for every point with the same detector layout and options. The repository ships a geometry file but no wire-scan file, so replace `point_1.h5` with your own point. The test suite generates a synthetic point from `tests/data/reconstruction/generate_reference.py`.
+Create the {class}`~lauelab.reconstruct.Reconstructor` once and reuse it for every point with the same detector layout and options. The repository contains a geometry file but no wire-scan file, so replace `point_1.h5` with your own point. The test suite generates a synthetic point from `tests/data/reconstruction/generate_reference.py`.
 
 ```python
 from pathlib import Path
@@ -54,7 +54,7 @@ peak_depth_um = result.depth_um[result.depth_intensity.argmax()]
 brightest_image = result.images[result.depth_intensity.argmax()]
 ```
 
-`depth_um` has shape `(n_depths,)`. `depth_intensity` holds the sum of each reconstructed image and has the same shape. `images` has shape `(n_depths, rows, columns)` and dtype `numpy.float64`. It is present only with `return_images=True`; a full 2048 by 2048 detector at 121 depths needs about 4 GiB. `timings` lists read, compute, and write seconds for each stripe.
+`depth_um` has shape `(n_depths,)`. `depth_intensity` contains the sum of each reconstructed image and has the same shape. `images` has shape `(n_depths, rows, columns)` and dtype `numpy.float64`. It is present only with `return_images=True`; a full 2048 by 2048 detector at 121 depths needs about 4 GiB. `timings` contains the read, compute, and write times in seconds for each stripe.
 
 ## Write depth files
 
@@ -64,9 +64,9 @@ Pass `output_base` to write one HDF5 file per depth and a summary text file. It 
 result = reconstructor.reconstruct("point_1.h5", output_base="run/point_1_")
 ```
 
-This writes `run/point_1_0.h5`, `run/point_1_1.h5`, one file for each further depth, and `run/point_1_summary.txt`. The directory is created when needed, and existing files with those names are overwritten. Each file copies the source metadata except the image data and wire positions.
+This writes `run/point_1_0.h5`, `run/point_1_1.h5`, one file for each further depth, and `run/point_1_summary.txt`. The directory is created when needed, and existing files with those names are overwritten. Each file contains the source metadata except the image data and wire positions.
 
-`output_pixel_type` selects the stored dtype. By default, file output keeps the input dtype when it has a code, `wire_edge="both"` selects `numpy.int32`, and other dtypes fall back to `numpy.float64`. HDF5 performs the float-to-integer conversion, including saturation. When `norm_exponent` is set and an integer type is written, the written images are multiplied by the factor stored in `entry1/microDiffraction/norm_rescale`. The `images` and `depth_intensity` fields keep the unscaled values.
+`output_pixel_type` selects the stored dtype. By default, file output keeps the input dtype when it has a code, `wire_edge="both"` selects `numpy.int32`, and other dtypes fall back to `numpy.float64`. HDF5 performs the float-to-integer conversion, including saturation. When `norm_exponent` is set and an integer type is written, the written images are multiplied by the factor stored in `entry1/microDiffraction/norm_rescale`. The `images` and `depth_intensity` fields contain the unscaled values.
 
 ## Reconstruct arrays
 
@@ -78,13 +78,13 @@ This writes `run/point_1_0.h5`, `run/point_1_1.h5`, one file for each further de
 - `scale` with shape `(N,)`: dimensionless per-frame factors, the array equivalent of `normalization`.
 - `intensity_map` with shape `(rows, columns)`, defaulting to the first frame.
 
-The default {class}`~lauelab.reconstruct.ImageGeometry` describes an unbinned full frame whose detector size equals the array size. Pass an explicit `ImageGeometry` for a binned image or a detector ROI. Its `start` and `group` are zero-based unbinned pixels. The array path writes no files and always returns `numpy.float64` images, so `normalization` and `output_pixel_type` do not apply.
+The default {class}`~lauelab.reconstruct.ImageGeometry` is an unbinned full frame whose detector size equals the array size. Pass an explicit `ImageGeometry` for a binned image or a detector ROI. Its `start` and `group` are zero-based unbinned pixels. The array path writes no files and always returns `numpy.float64` images, so `normalization` and `output_pixel_type` do not apply.
 
 ## How a point file is read
 
 A 34-ID-E multi-image file contains bookkeeping entries at the start of the image stack and of each wire vector. Two options set how many entries are skipped. Their defaults are the values compiled into `reconstructN_cpu`:
 
-- `frame_skip` is the executable's `MULTI_IMAGE_SKIP`. Slice `frame_skip` is both the intensity map and the first scan frame. The last stored slice is never differenced. An `N`-slice file therefore reconstructs scan frames from slices `frame_skip` to `N - 2`, and needs at least `frame_skip + 4` slices.
+- `frame_skip` is the executable's `MULTI_IMAGE_SKIP`. Slice `frame_skip` is both the intensity map and the first scan frame. The last stored slice is never differenced. For a file with `N` slices, the scan frames are therefore slices `frame_skip` to `N - 2`, and the file needs at least `frame_skip + 4` slices.
 - `wire_skip` is the executable's `MULTI_IMAGE_SKIPV`. The executable always ignores entry 0 of a stored vector that has more than one entry, and `wire_skip` counts the entries skipped after it. Zero-based scan frame `f` pairs with stored wire entries `f + 1 + wire_skip` and `f + 2 + wire_skip`.
 
 With both defaults, scan frame `f` is stored slice `f + 1` and pairs with wire entries `f + 2` and `f + 3`. The normalization vector is not shifted by `frame_skip`: scan frame `f` is scaled by entry `f + 1`, as in the executable.
@@ -93,9 +93,9 @@ With both defaults, scan frame `f` is stored slice `f + 1` and pairs with wire e
 `frame_skip` and `wire_skip` determine which wire positions are paired with each frame, and therefore the depth assigned to the intensity in each frame. Change them only to match a documented acquisition layout.
 ```
 
-The positioner correction comes from the file's `file_time` attribute. Files before May 2006 get no correction, files before October 2009 get the PM500 correction, and later files get the Alio identity correction. Matching the executable, a `file_time` written with the ISO `T` separator is not parsed and receives no correction.
+The `file_time` attribute of the file selects the positioner correction: no correction before May 2006, the PM500 correction before October 2009, and the Alio identity correction after that. As in the executable, a `file_time` written with the ISO `T` separator is not parsed, and no correction is applied.
 
-`normalization` reads `entry1/<tag>` and divides by 102 for `mA` and 88100 for `cnt3`. A missing or short vector raises `InputError`. The executable silently skips normalization in that case, so a file that reconstructs with the executable can still fail here.
+`normalization` reads `entry1/<tag>` and divides by 102 for `mA` and 88100 for `cnt3`. A missing or short vector raises `InputError`. In that case the executable skips normalization without a message, so a file that the executable reconstructs can fail here.
 
 ## Control memory and threads
 
@@ -137,7 +137,7 @@ An expected input, memory, or I/O failure in one point returns `success=False` f
 
 ## Reconstruct a scan
 
-{func}`~lauelab.reconstruct.reconstruct_scan` writes one HDF5 file per point under `points/`, plus a shared `scan.h5` catalog. The catalog lists all requested points, their status, and their acquisition metadata.
+{func}`~lauelab.reconstruct.reconstruct_scan` writes one HDF5 file per point under `points/`, plus a shared `scan.h5` catalog. The catalog contains the requested points, their statuses, and their acquisition metadata. It also contains an HDF5 external link to each complete point file under `/point_files`, so an HDF5 viewer can open every completed point from `scan.h5`.
 
 ```text
 run/
@@ -172,9 +172,9 @@ Choose `workers` and `threads_per_worker` for the cores you have. Each worker is
 
 Frames are stored uncompressed by default. Set `compression="gzip"` for lossless compression. In a full-size synthetic test, compression increased run time by about 40%; the reduction in file size depends on the data. Compare both settings on a representative point.
 
-`progress` receives a {class}`~lauelab.reconstruct.PointOutcome` in the calling process when each point is recorded, starting with any input that could not be read. `result.outcomes` holds one outcome per input, in input order.
+`progress` receives a {class}`~lauelab.reconstruct.PointOutcome` in the calling process when each point is recorded, starting with any input that could not be read. `result.outcomes` contains one outcome per input, in input order.
 
-The coordinator keeps live progress in memory and batches catalog changes into five-second snapshots. The initial and final catalog are written immediately. After a hard termination, completed point files remain independently usable, although the last catalog snapshot may not list all of them as complete. This provides a recent record of progress, without automatic resume or a power-loss durability guarantee.
+The coordinator keeps live progress in memory and batches catalog changes into five-second snapshots. The initial and final catalog are written immediately. After a hard termination, completed point files can be used by themselves, although the last catalog snapshot may not list all of them as complete. The catalog is therefore a recent record of progress. Automatic resume is not supported, and durability after a power loss is not guaranteed.
 
 ### Stop a scan
 
@@ -182,11 +182,11 @@ The coordinator keeps live progress in memory and batches catalog changes into f
 
 ### Failures
 
-An input that cannot be read, or a reconstruction that fails, marks that point `failed` with its message and does not stop the scan. If writing or publishing a point file fails, the scan waits for running points to finish and then raises {class}`~lauelab.indexing.ReconstructionError`. An unexpected worker exit also raises `ReconstructionError`. In both cases completed point files are kept, and `scan.h5` records the run as `failed`. A failure to write `scan.h5` itself raises `OSError` and leaves the last complete version of the catalog in place.
+An input that cannot be read, or a reconstruction that fails, marks that point `failed` with its message and does not stop the scan. If writing or publishing a point file fails, the scan waits for running points to finish and then raises {class}`~lauelab.indexing.ReconstructionError`. An unexpected worker exit also raises `ReconstructionError`. In both cases, completed point files are kept, and the run status in `scan.h5` is `failed`. A failure to write `scan.h5` raises `OSError`, and the last complete version of the catalog remains in place.
 
 ### Read the scan
 
-Point files retain acquisition metadata under `/entry1` and store reconstructed images at `/entry1/data/data`, with shape `(n_depths, ny, nx)`. NeXus attributes identify the images and their physical depth axis. Reconstruction settings, reference images, and intensity sums are under `/entry1/reconstruction`. The [format specification](../development/reconstruction-scan-format.md) lists all paths and attributes.
+A point file has the layout of the per-depth files that `reconstructN_cpu` writes, with every depth in one file. The acquisition metadata of the input is copied under `/entry1`. The reconstructed images are at `/entry1/data/data`, with shape `(n_depths, ny, nx)`, and their physical depths in µm are at `/entry1/depth`. The cosmic-filter and exponent-normalization values are at the `/entry1/microDiffraction` paths that the executable uses. Reconstruction settings, reference images, and intensity sums are under `/entry1/reconstruction`. The [format specification](../development/reconstruction-scan-format.md) lists all paths and attributes.
 
 {class}`~lauelab.reconstruct.ScanReader` lists the points from `scan.h5` and opens the point files you ask for. Completed points can be read while the scan is still running. A reader shows the catalog as it was when the reader was created; create a new reader to see later progress.
 
@@ -208,9 +208,9 @@ with ScanReader("run/scan.h5") as scan:
 
 `depth_index` selects a frame by its zero-based position in the stack. Its physical depth in µm is `point.depth_um[depth_index]`.
 
-`point.depth_intensity()` returns the sum of each stored frame, after conversion to the output pixel type. `point.computed_depth_intensity()` is the unscaled `numpy.float64` total that `ReconstructionResult.depth_intensity` reports. The two differ whenever storage changed a pixel: an unsigned type stores 0 for every negative pixel, and exponent normalization rescales integer output. `point.reference("first_raw")`, `"sum_raw"`, and `"sum_reconstructed"` return the embedded reference images. [Reconstruction scan format](../development/reconstruction-scan-format.md) defines these values exactly.
+`point.depth_intensity()` returns the sum of each stored frame, after conversion to the output pixel type. `point.computed_depth_intensity()` returns the unscaled `numpy.float64` totals, which equal `ReconstructionResult.depth_intensity`. The two differ when storage changed a pixel: in an unsigned type, every negative pixel is stored as 0, and exponent normalization rescales integer output. `point.reference("first_raw")`, `"sum_raw"`, and `"sum_reconstructed"` return the embedded reference images. [Reconstruction scan format](../development/reconstruction-scan-format.md) defines these values exactly.
 
-Use {class}`~lauelab.reconstruct.PointReader` to open a point directly, including a copy moved elsewhere. All the metadata needed to read it is included in the file; the catalog, raw input, and original geometry file are unnecessary:
+Use {class}`~lauelab.reconstruct.PointReader` to open a point directly, including a copy moved elsewhere. All the metadata needed to read it is included in the file; the catalog, raw input, and original geometry file are unnecessary. `point.settings` contains the settings that were used, including values that were selected automatically:
 
 ```python
 from lauelab.reconstruct import PointReader
@@ -244,7 +244,7 @@ The output must not exist; its directory is created when needed. Invalid paramet
 
 ### Schedule points yourself
 
-Use `prepare_scan` when you want an MPI application or batch scheduler to distribute the work. {func}`~lauelab.reconstruct.prepare_scan` checks the inputs, publishes the first `scan.h5`, and returns the coordinator with one {class}`~lauelab.reconstruct.PointTask` per readable input. A task carries the request and the input metadata checked during preparation. It can be pickled or converted to JSON with `dataclasses.asdict` and rebuilt with `PointTask(**values)`. Each worker calls `reconstruct_point(task)` and returns the small outcome; pixels never leave the worker. Only the coordinator writes `scan.h5`.
+Use `prepare_scan` when you want an MPI application or batch scheduler to distribute the work. {func}`~lauelab.reconstruct.prepare_scan` checks the inputs, publishes the first `scan.h5`, and returns the coordinator with one {class}`~lauelab.reconstruct.PointTask` per readable input. A task contains the request and the input metadata checked during preparation. It can be pickled or converted to JSON with `dataclasses.asdict` and rebuilt with `PointTask(**values)`. Each worker calls `reconstruct_point(task)`, which writes the frames to the point file and returns only a small outcome. Only the coordinator writes `scan.h5`.
 
 Keep prepared tasks unchanged: the coordinator checks completed files against its original request. A worker rejects inputs whose selected frame range or acquisition metadata changed after preparation.
 
@@ -270,11 +270,11 @@ Record each dispatch before the worker starts and each outcome when it returns, 
 
 Assign each task once. If a worker is lost, record a failed outcome for its task, such as `PointOutcome(task.index, task.point_id, "failed", "worker lost")`; the coordinator does not retry.
 
-`finish()` requires an outcome for every dispatched task. Pass `cancelled=True` to finish before every task was dispatched. Leaving the `with` block without `finish()` records the run as `failed`. [Reconstruction scan format](../development/reconstruction-scan-format.md) describes these steps and the catalog statuses.
+`finish()` requires an outcome for every dispatched task. Pass `cancelled=True` to finish before every task was dispatched. Leaving the `with` block without `finish()` records the run as `failed`. [Reconstruction scan protocol](../development/reconstruction-scan-protocol.md) describes these steps and the catalog statuses.
 
 ### Index frames from a scan
 
-A {class}`~lauelab.indexing.ScanFrame` identifies a stored frame by the point file, the point ID, and the depth index. {meth}`ScanReader.point_path() <lauelab.reconstruct.ScanReader.point_path>` resolves a catalog point ID to its file. {meth}`Indexer.index() <lauelab.indexing.Indexer.index>`, `index_many()`, and {meth}`Indexer.iter_index() <lauelab.indexing.Indexer.iter_index>` accept a `ScanFrame` wherever they accept a frame path.
+A {class}`~lauelab.indexing.ScanFrame` contains the point file, the point ID, and the depth index of a stored frame. {meth}`ScanReader.point_path() <lauelab.reconstruct.ScanReader.point_path>` resolves a catalog point ID to its file. {meth}`Indexer.index() <lauelab.indexing.Indexer.index>`, `index_many()`, and {meth}`Indexer.iter_index() <lauelab.indexing.Indexer.iter_index>` accept a `ScanFrame` wherever they accept a frame path.
 
 ```python
 from lauelab.indexing import Indexer
@@ -295,7 +295,7 @@ indexer.write_results(results, "run/indexed.h5")
 
 Indexing opens only the point file. It reads exactly the selected frame, in its stored dtype, together with the point's physical depth, detector identifier, frame origin, and binning, and the scan number, sample position, and energy of the input. The stored depth is used unless you pass `depth`, and an explicit `depth`, including `0.0`, overrides it. A missing file, a file that records another point ID, or a depth index outside the stack raises {class}`~lauelab.indexing.InputError`, or in `iter_index` becomes a failed outcome for that input.
 
-Each result retains this reference in `FrameResult.source`. Saving and reopening the indexing results preserves the point file path, point ID, and depth index, so the detector view can display the frame used for indexing. See [Frame input](frame-input.md) for the values a scan frame supplies.
+Each result contains this reference in `FrameResult.source`. The indexing results file contains the point file path, point ID, and depth index, so the detector view can display the frame used for indexing after the file is reopened. See [Frame input](frame-input.md) for the values a scan frame supplies.
 
 ### Export per-depth files
 
@@ -307,7 +307,7 @@ from lauelab.reconstruct import export_per_depth
 paths = export_per_depth("run/points/point_1.h5", "run/export/scan12_p1_")
 ```
 
-The export copies the stored pixels, dtype, physical depth, detector metadata, and normalization provenance. The resulting files support the same reading and indexing operations as per-depth output from `Reconstructor.reconstruct()`. The summary file reports `$executionTime` as zero because export does not run reconstruction, and `$rows_at_one_time` as the stripe height used during reconstruction. A failed export leaves the point file unchanged.
+The export copies the stored pixels in their dtype, the physical depths, the detector metadata, and the normalization values. The files can be read and indexed in the same way as per-depth output from `Reconstructor.reconstruct()`. The summary file contains the `$executionTime` and `$rows_at_one_time` of the reconstruction that wrote the point file. A failed export does not change the point file.
 
 ## Handle failures
 

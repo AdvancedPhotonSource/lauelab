@@ -13,7 +13,7 @@ import numpy as np
 import h5py
 import shutil
 
-from lauelab.reconstruct.reconstruct import _validate_executable
+from lauelab.reconstruct.reconstruct import _find_executable, _validate_executable
 from lauelab.reconstruct import (
     reconstruct,
     find_executable,
@@ -258,6 +258,8 @@ class TestReconstruct:
     
     def test_executable_not_found(self):
         """Test behavior when executable is not found."""
+        # An earlier test may have cached the real executable's path.
+        _find_executable.cache_clear()
         with patch('lauelab.reconstruct.reconstruct.shutil.which', return_value=None):
             with patch('lauelab.reconstruct.reconstruct.resources.files', side_effect=ModuleNotFoundError):
                 with pytest.raises(FileNotFoundError, match="not found"):
