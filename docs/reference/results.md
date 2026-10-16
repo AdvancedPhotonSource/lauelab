@@ -19,6 +19,10 @@ See [Results files](../guides/results-file.md) for writing, loading, and convert
 
 .. autofunction:: validate_results_file
 
+.. autofunction:: merge_results_files
+
+.. autofunction:: merge_xml_files
+
 .. autoclass:: ResultsFileSummary
 
 .. currentmodule:: lauelab
@@ -34,6 +38,10 @@ See [Results files](../guides/results-file.md) for writing, loading, and convert
 ### File layout
 
 Format `lauelab-indexing-results`, version 1. Root attributes are `format`, `version`, `lauelab_version`, `created`, and, for a converted file, `source`. The `run` group has no datasets; its attributes are `program`, `detector_index`, `detector_id`, `cosmic_filter`, and one attribute per {class}`~lauelab.indexing.PeakParams` and {class}`~lauelab.indexing.IndexParams` field. The `crystal` group carries `name`, `space_group`, `setting`, and `source` as attributes and is absent when the run had no crystal. The `geometry` group carries `path` as an attribute.
+
+A merged file has a `merged_sources` root attribute listing its input files in
+order. Its `created` and `lauelab_version` describe the merge, and it has no
+single-document `source` attribute.
 
 A converted file carries only the run attributes the XML recorded, when present: `program`, `peak_program`, `cosmic_filter`, `max_rfactor`, `max_peaks`, `min_separation`, `peak_shape`, `mask_file`, `kev_max_calc`, `kev_max_test`, `angle_tolerance_deg`, `cone_deg`, and `hkl_prefer`.
 

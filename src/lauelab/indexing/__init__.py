@@ -23,6 +23,7 @@ from .indexer import (
 )
 from .results import ResultsFileSummary, ResultsWriter, validate_results_file
 from .xml_utils import XmlResultsWriter
+from .merge import merge_results_files, merge_xml_files
 
 __all__ = [
     'lauego',
@@ -63,4 +64,6 @@ __all__ = [
     'ResultsFileSummary',
     'validate_results_file',
     'XmlResultsWriter',
+    'merge_results_files',
+    'merge_xml_files',
 ]

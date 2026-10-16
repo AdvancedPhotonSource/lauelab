@@ -2,6 +2,22 @@
 
 This directory contains a minimal, standalone performance test runner for the reconstruction code. It is completely separate from pytest and will not be collected by default test runs.
 
+`run_merge_perf.py` measures validated indexing HDF5 and XML merging on CPU.
+It repeats four indexed synthetic frames into separate files and measures each
+merge in a fresh process, reporting wall time, CPU time, and peak resident
+memory. Fixture generation and imports are outside the timed region. Inputs
+are newly written, so these are warm-cache measurements on the selected
+filesystem. `--compare-tree` also measures collecting and serializing a full
+XML tree. No MPI or detector-scale image processing is involved.
+
+```console
+$ python tests/perf_testing/run_merge_perf.py --frames 1024 10240 --shards 4 16 --runs 3 --compare-tree --workdir /path/to/workdir --output merge-perf.json
+```
+
+Frame counts must be positive multiples of four times each shard count. The
+script removes its generated files after reporting. It has no timing threshold;
+shared-storage and MPI communication require separate measurements.
+
 `run_simulation_perf.py` measures the reflection simulator separately. It reports cold import and first-call time, warm-call median, peak resident memory, scientific inputs, spot count, and the private candidate limit.
 
 Run the observational simulation benchmark from the repository root:

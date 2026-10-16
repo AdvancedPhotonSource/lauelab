@@ -104,6 +104,55 @@ with indexer.iter_index(inputs, workers=8) as outcomes, \
 
 Results arrive without images by default, so only peaks, patterns, and provenance cross between processes. See [Batch indexing](batch-indexing.md) for the in-flight bound, error handling, and cooperative stopping.
 
+## Merge results from independent workers
+
+Combine results files with
+{func}`~lauelab.indexing.merge_results_files`. Assign globally unique frame IDs
+when writing the worker files; each writer's default IDs restart at zero.
+
+```python
+from lauelab.indexing import merge_results_files, merge_xml_files
+
+summary = merge_results_files(
+    ["worker-0.h5", "worker-1.h5"], "results.h5",
+    frame_ids=["point-a/depth-0", "point-a/depth-1", "point-b/depth-0"],
+)
+print(summary.n_frames, summary.n_patterns)
+
+steps = merge_xml_files(
+    ["worker-0.xml", "worker-1.xml"], "results.xml", n_steps=summary.n_frames,
+)
+```
+
+Files are concatenated in the supplied order, retaining each file's frame
+order. `frame_ids` checks that exact sequence; it does not sort or redistribute
+frames. All HDF5 inputs and the merged output are structurally validated.
+Duplicate identities, mixed integer and string identities, incompatible run
+settings, and differences in geometry or crystal metadata raise
+{class}`~lauelab.indexing.InvalidResultsFile`. Metadata must match exactly,
+including paths and units. Empty input files are allowed, and older files
+without the optional scan-source columns receive the documented absent values.
+
+HDF5 arrays are copied in bounded blocks into an uncompressed file, and ragged
+offsets are rebased. Detector images are not read and indexing is not repeated.
+Frame IDs and validation bookkeeping use memory proportional to the numbers of
+frames and patterns. The result contains its own datasets, so you can remove
+worker files after checking the result.
+
+The XML merger checks well-formed XML, the `AllSteps` root, its `step` children,
+and the optional expected count. It preserves each document's body as bytes,
+including numeric text. This structural check does not establish scientific
+compatibility or unique frame identities. Inputs must use XML 1.0 with UTF-8
+or ASCII encoding, an `AllSteps` root without attributes, and no DTD. Parsing
+and copying use bounded buffers without constructing a tree for the scan.
+
+Keep all inputs closed and unchanged during merging. Both functions publish
+through a unique temporary file; any failure removes that temporary and leaves
+an existing destination untouched. Pass `overwrite=True` to replace an
+existing result after a successful merge. The destination must always differ
+from every input. Worker scheduling and communication are managed by your
+application; these functions have no MPI dependency.
+
 ## Load a results file
 
 {func}`~lauelab.visualization.load_results` returns the same {class}`~lauelab.visualization.VisualizationDataset` as the other loaders:
