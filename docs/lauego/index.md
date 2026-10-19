@@ -1,6 +1,6 @@
 # LaueGo interfaces
 
-The `lauego` function runs the `peaksearch`, `pix2qs`, and `euler` programs and writes intermediate text files beneath an output directory.
+The `lauego` function runs the LaueGo-derived `peaksearch`, `pix2qs`, and `euler` programs and writes intermediate text files beneath an output directory. The original Igor Pro suite is credited in [acknowledgments and citations](../acknowledgments.md).
 
 New code should use the in-process API. The LaueGo function remains documented so existing workflows can migrate without assuming identical behavior.
 

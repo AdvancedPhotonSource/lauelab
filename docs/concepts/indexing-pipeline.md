@@ -2,6 +2,8 @@
 
 Indexing converts intensity measurements on a detector into one or more candidate crystal orientations. `lauelab` performs this work in three stages and returns their outputs together in a {class}`~lauelab.indexing.FrameResult`.
 
+The analysis routines are adapted from LaueGo, described by [Tischler (2014)](https://doi.org/10.1142/9781908979636_0010).
+
 ## Inputs and outputs
 
 A complete orientation-indexing call needs:

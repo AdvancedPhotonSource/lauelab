@@ -4,6 +4,8 @@ A wire scan records a stack of detector frames while a wire moves across the dif
 
 Reconstruction resolves the frame stack into one detector image for each requested depth. `lauelab` performs this work in-process with {class}`~lauelab.reconstruct.Reconstructor` and returns a {class}`~lauelab.reconstruct.ReconstructionResult`.
 
+The differential-aperture X-ray microscopy method is described by [Larson et al. (2002)](https://doi.org/10.1038/415887a) and [Yang et al. (2004)](https://doi.org/10.1016/j.micron.2004.02.004).
+
 ## Inputs and outputs
 
 A reconstruction call needs:

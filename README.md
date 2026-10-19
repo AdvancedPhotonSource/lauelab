@@ -2,6 +2,8 @@
 
 Python and native tools for Laue diffraction analysis at APS beamline 34-ID-E. The package supports indexing, wire-scan reconstruction, simulation, orientation analysis, and interactive visualization.
 
+Built on [LaueGo](https://github.com/34IDE/LaueGo), developed by Jon Z. Tischler and collaborators. See [acknowledgments and citations](docs/acknowledgments.md).
+
 > [!NOTE]
 > `lauelab` is alpha software under active development. Public behavior can change before a stable release.
 
