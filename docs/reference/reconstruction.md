@@ -16,7 +16,7 @@ The subprocess environment defaults `OPENBLAS_NUM_THREADS` to `1`. The reconstru
 
 ## Differences from the executable
 
-The `reconstructN_cpu` option `-n <tag>` scales each scan frame by `entry1/<tag>`, or by `<tag>` at the file root when `entry1/<tag>` is absent, divided by 102 for `mA` and 88100 for `cnt3`. The in-process path uses the same divisors but reads only `entry1/<tag>`. It raises {class}`~lauelab.indexing.InputError` when that vector is missing or shorter than the scan; in the same case, the executable skips normalization without a message. This difference is deliberate: the in-process path reports a request that it cannot complete.
+The `reconstructN_cpu` option `-n <tag>` scales each scan frame by `entry1/<tag>`, or by `<tag>` at the file root when `entry1/<tag>` is absent, divided by 102 for `mA` and 88100 for `cnt3`. The in-process path uses the same divisors but reads only `entry1/<tag>`. It raises {class}`~lauelab.indexing.InputError` when that vector is missing or shorter than the scan. In the same case, the executable skips normalization without a message.
 
 `Reconstructor` accepts `frame_skip` and `wire_skip`, which are the executable's compiled `MULTI_IMAGE_SKIP` and `MULTI_IMAGE_SKIPV`. Both default to 1, the values compiled into the executable. The scan catalog contains `/parameters/frame_skip` and `/parameters/wire_skip`, and point files contain `/entry1/reconstruction/frame_skip` and `/entry1/reconstruction/wire_skip`.
 

@@ -1,6 +1,6 @@
 # HDF5 file conventions
 
-Indexing results and [reconstruction catalogs and point files](reconstruction-scan-format.md) use these HDF5 conventions, with the exception for point files described under Units. Detector frames and per-depth reconstruction outputs have the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
+Indexing results, [Q-distribution profiles](energy-format.md), and [reconstruction catalogs and point files](reconstruction-scan-format.md) use these HDF5 conventions, with the exception for point files described under Units. Detector frames and per-depth reconstruction outputs have the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
 
 ## Root attributes
 
@@ -42,12 +42,12 @@ Store datasets uncompressed unless the writer has a compression option. A compre
 
 ## Validation and publication
 
-Each lauelab format has a structural validator in addition to its format marker. `lauelab.indexing.validate_results_file` and `lauelab.reconstruct.validate_scan_file` check required datasets, dtypes, shapes, row counts, and applicable offset arrays using bounded reads.
+Use the validator for the file's format: `lauelab.indexing.validate_results_file`, `lauelab.energy.validate_q_distribution_file` or `lauelab.reconstruct.validate_scan_file`. These functions check required datasets, dtypes, shapes, row counts and applicable offset arrays using bounded reads. The Q-distribution validator also checks numerical relationships and scientific settings.
 
 Write output to the `.partial` path of the destination, then close and validate the file before renaming it with `lauelab.publish_file`. The final path then exists only after validation succeeds. If a write fails in the middle of a record, the partial file is invalid and must be written again.
 
 ## Layout definition
 
-Define the complete layout of a format in one module: every dataset path, dtype, shape, units, and fixed attribute. The writer, reader, and converter use that table, and a test compares it with the documented layout. The indexing results layout is `lauelab/_results_layout.py`, and the reconstruction scan layout is `lauelab/reconstruct/_scan_layout.py`; the shared root-attribute and version helpers are `lauelab/_hdf5.py`.
+Define the complete layout of a format in one module: every dataset path, dtype, shape, units and fixed attribute. The writer, reader and converter use that table, and a test compares it with the documented layout. The layout modules are `lauelab/_results_layout.py` for indexing results, `lauelab/energy/_layout.py` for Q-distribution profiles, and `lauelab/reconstruct/_scan_layout.py` for reconstruction scans. Shared root-attribute and version helpers are in `lauelab/_hdf5.py`.
 
 The optional indexing source selectors `frames/source_point_ids` and `frames/source_depth_indices` must be present together. In a file with neither, no frame has a scan source. A scan source has a non-empty path and point ID and a nonnegative depth index. An ordinary frame has an empty source point ID and the index `-1`. Validation rejects a file with only one of the two selectors or with inconsistent selector values.

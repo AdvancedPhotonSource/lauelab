@@ -1,6 +1,6 @@
 # API reference
 
-This reference documents the supported indexing, reconstruction, analysis, and visualization APIs. Private helpers and native bindings may change independently of these interfaces.
+This reference documents the supported indexing, reconstruction, monochromatic image reduction, analysis and visualization APIs. Private helpers and native bindings may change independently of these interfaces.
 
 Use the [user guides](../guides/index.md) for task-oriented explanations and examples.
 
@@ -14,6 +14,7 @@ geometry
 crystals
 analysis
 simulation
+energy
 visualization
 reconstruction
 errors

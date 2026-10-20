@@ -82,13 +82,13 @@ for hkl, xy, energy in zip(
 
 The comparison uses signed primitive directions. An indexed `(2, 2, 2)` suppresses a simulated `(1, 1, 1)` because both are positive harmonics. It does not suppress `(-1, -1, -1)`. Duplicate indexed rows do not change the result.
 
-The returned object owns new read-only arrays and retains the simulation order.
+`missing_from()` returns independent, read-only arrays in the same order as the simulation.
 
 ## Interpret numerical behavior
 
 Energy bounds are inclusive. A reflection at either requested bound remains eligible.
 
-The result contains one row per positive harmonic direction. The function keeps the row with the greatest relative intensity. Equal intensities prefer lower energy, then lexicographically smaller HKL. Final rows use descending relative intensity with the same tie-breakers.
+The result contains one row per positive harmonic direction. The function selects the row with the greatest relative intensity. For equal intensities, it selects lower energy, then lexicographically smaller HKL. Final rows are sorted by descending relative intensity with the same tie-breakers.
 
 Simulation keeps only finite intersections inside the selected full detector. ROI origin, detector-pixel grouping, image shape, and display-axis inversion do not affect `SimulationResult`.
 

@@ -93,7 +93,7 @@ With both defaults, scan frame `f` is stored slice `f + 1` and pairs with wire e
 `frame_skip` and `wire_skip` determine which wire positions are paired with each frame, and therefore the depth assigned to the intensity in each frame. Change them only to match a documented acquisition layout.
 ```
 
-The `file_time` attribute of the file selects the positioner correction: no correction before May 2006, the PM500 correction before October 2009, and the Alio identity correction after that. As in the executable, a `file_time` written with the ISO `T` separator is not parsed, and no correction is applied.
+Reconstruction selects the positioner correction from the `file_time` attribute: no correction before May 2006, the PM500 correction before October 2009, and the Alio identity correction after that. As in the executable, a `file_time` written with the ISO `T` separator is not parsed, and no correction is applied.
 
 `normalization` reads `entry1/<tag>` and divides by 102 for `mA` and 88100 for `cnt3`. A missing or short vector raises `InputError`. In that case the executable skips normalization without a message, so a file that the executable reconstructs can fail here.
 
@@ -166,7 +166,7 @@ result = reconstruct_scan(
 failed = [outcome for outcome in result.outcomes if outcome.status != "complete"]
 ```
 
-The output directory must not exist or must be empty. Output filenames use the input stem: `point_1.h5` writes `run/points/point_1.h5`. Two inputs whose stems are equal, or differ only in letter case, are rejected before any file is written; reconstruct them into separate directories. Use `point_ids` to supply unique, non-empty identifiers for selecting points from the scan. These IDs are also saved in the point files. If omitted, they default to the input stems.
+The output directory must not exist or must be empty. Reconstruction names output files using the input stem: for `point_1.h5`, it writes `run/points/point_1.h5`. Two inputs whose stems are equal, or differ only in letter case, are rejected before any file is written; reconstruct them into separate directories. Use `point_ids` to supply unique, non-empty identifiers for selecting points from the scan. These IDs are also saved in the point files. If omitted, they default to the input stems.
 
 Choose `workers` and `threads_per_worker` for the cores you have. Each worker is a separate process that reconstructs one point at a time with `threads_per_worker` OpenMP threads. `threads_per_worker=None` divides the estimated physical cores among the workers. Memory demand grows with `workers`, because each worker holds its own stripe buffers and frame-sized references; `memory_limit_mb` applies to each worker separately. Storage conversion can run while a worker computes the next stripe, so `workers × threads_per_worker` is not a strict limit on busy threads. Measure a representative point on your nodes before choosing a configuration for a large scan.
 
@@ -295,7 +295,7 @@ indexer.write_results(results, "run/indexed.h5")
 
 Indexing opens only the point file. It reads exactly the selected frame, in its stored dtype, together with the point's physical depth, detector identifier, frame origin, and binning, and the scan number, sample position, and energy of the input. The stored depth is used unless you pass `depth`, and an explicit `depth`, including `0.0`, overrides it. A missing file, a file that records another point ID, or a depth index outside the stack raises {class}`~lauelab.indexing.InputError`, or in `iter_index` becomes a failed outcome for that input.
 
-Each result contains this reference in `FrameResult.source`. The indexing results file contains the point file path, point ID, and depth index, so the detector view can display the frame used for indexing after the file is reopened. See [Frame input](frame-input.md) for the values a scan frame supplies.
+Each result contains this reference in `FrameResult.source`. The indexing results file contains the point file path, point ID and depth index, so the detector view can display the frame used for indexing after the file is reopened. See [Frame input](frame-input.md) for the metadata read from a scan frame.
 
 ### Export per-depth files
 

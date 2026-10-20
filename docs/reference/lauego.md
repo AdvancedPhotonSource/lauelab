@@ -1,7 +1,7 @@
 # LaueGo API
 
 The LaueGo API invokes command-line executables and writes intermediate files.
-New integrations should use `index_frame` or `Indexer` from the
+For in-process indexing, use `index_frame` or `Indexer` from the
 {doc}`processing` API.
 
 Each program has a corresponding in-process stage:
@@ -27,5 +27,5 @@ Result returned by the LaueGo subprocess indexing interface.
 
 The result contains the overall status, generated output paths, peak and
 pattern counts, optional parsed LaueGo data, the XML path, logs, an optional
-error message, and the command history. New code should use `FrameResult`.
+error message, and the command history. The in-process API returns `FrameResult`.
 ```

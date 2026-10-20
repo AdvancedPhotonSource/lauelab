@@ -68,7 +68,7 @@ After a write failure, {class}`~lauelab.indexing.ResultsWriter` rejects further 
 
 ## Reconstruction failure
 
-{class}`~lauelab.reconstruct.Reconstructor` raises `InputError` and `MemoryError` for failures before the first stripe is processed. A failure after that point does not raise. It returns a {class}`~lauelab.reconstruct.ReconstructionResult` with `success=False`, the message in `error`, and the progress made so far in `last_completed_stripe`. `ReconstructionError` names a native failure in that message; an I/O failure carries the underlying `OSError` text.
+{class}`~lauelab.reconstruct.Reconstructor` raises `InputError` and `MemoryError` for failures before the first stripe is processed. After processing starts, the reconstructor returns expected failures as a {class}`~lauelab.reconstruct.ReconstructionResult` with `success=False`, the message in `error`, and progress in `last_completed_stripe`. The message contains `ReconstructionError` for a native failure or the underlying `OSError` text for an I/O failure.
 
 Check `success` on every result. {func}`~lauelab.reconstruct.reconstruct_points` applies the same rule to each point and continues the batch after a failed point. See [Reconstruct a wire scan](reconstruction.md).
 

@@ -76,7 +76,7 @@ with indexer.iter_index(inputs, workers=4) as outcomes:
             print(outcome.input_id, "failed:", outcome.error)
 ```
 
-Each worker builds a local `Indexer` from the parent's geometry path, crystal, parameters, and detector selection. A {class}`~lauelab.indexing.FrameInput` carries the frame, an optional stable `input_id`, and the per-frame `start`, `group`, `depth`, and `metadata` values of `index()`. A shared `mask` is passed once to `iter_index()` and sent to each worker once. Plain paths or arrays are accepted in place of `FrameInput` when no identity or per-frame values are needed.
+Each worker builds a local `Indexer` from the parent's geometry path, crystal, parameters, and detector selection. A {class}`~lauelab.indexing.FrameInput` contains the frame, an optional stable `input_id`, and the per-frame `start`, `group`, `depth`, and `metadata` values of `index()`. A shared `mask` is passed once to `iter_index()` and sent to each worker once. Plain paths or arrays are accepted in place of `FrameInput` when no identity or per-frame values are needed.
 
 `max_in_flight` limits the number of submitted inputs whose outcomes have not yet been yielded; the default is `2 * workers`. If an early frame is slow, later results wait in this bounded buffer and further submissions pause until space is available. Results come back without images unless `keep_images=True`.
 
@@ -98,7 +98,7 @@ Write successful results to one results file:
 indexer.write_results(results, "indexed-scan.h5")
 ```
 
-Results are written in iteration order, and an existing destination raises `FileExistsError` unless you pass `overwrite=True`. For a scan too large to hold in memory, `indexer.results_writer()` appends each result as it is produced; see [Results files](results-file.md).
+Results are written in iteration order. The writer raises `FileExistsError` for an existing destination unless you pass `overwrite=True`. When a scan's results do not fit in memory, use `indexer.results_writer()` to append each result as it is produced; see [Results files](results-file.md).
 
 Write a LaueGo XML document when other software requires that format:
 
@@ -106,7 +106,7 @@ Write a LaueGo XML document when other software requires that format:
 indexer.write_many_xml(results, "indexed-scan.xml")
 ```
 
-The XML destination is replaced if it exists. A result constructed manually without an XML snapshot raises `RuntimeError`. Results are serialized one at a time, so the call does not hold the whole document in memory; to write XML while indexing, use {class}`~lauelab.indexing.XmlResultsWriter` as shown in {ref}`Write XML alongside <results-file-xml-alongside>`.
+The XML destination is replaced if it exists. XML writing raises `RuntimeError` for a manually constructed result without an XML snapshot. Results are serialized one at a time without loading the whole document into memory. To write XML while indexing, use {class}`~lauelab.indexing.XmlResultsWriter` as shown in {ref}`Write XML alongside <results-file-xml-alongside>`.
 
 ## Measure performance
 

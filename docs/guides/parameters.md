@@ -102,7 +102,7 @@ Changes to peak acceptance can change the scattering vectors available to indexi
 6. Compare pattern count, assignments, and angular errors across runs.
 7. Record the chosen values and the reason for each change.
 
-This process isolates parameter effects. Numerical thresholds and acceptance criteria still require experiment-specific review.
+This process isolates parameter effects. Numerical thresholds and acceptance criteria require experiment-specific review.
 
 ## Performance and reproducibility
 

@@ -2,9 +2,9 @@
 
 The `lauego` function runs the LaueGo-derived `peaksearch`, `pix2qs`, and `euler` programs and writes intermediate text files beneath an output directory. The original Igor Pro suite is credited in [acknowledgments and citations](../acknowledgments.md).
 
-New code should use the in-process API. The LaueGo function remains documented so existing workflows can migrate without assuming identical behavior.
+Use this interface when you need the command-line programs and their intermediate files. For processing in Python with NumPy results and exceptions, use the in-process API described below. The two interfaces differ in their arguments, return types and error handling.
 
-## Current interfaces
+## Run the subprocess pipeline
 
 ```python
 from lauelab.indexing import lauego
@@ -14,7 +14,7 @@ The function returns an `IndexingResult`, documented in the [LaueGo API referenc
 
 The LaueGo pipeline can report overall success after a later stage fails or produces no output. Applications must inspect its returned fields and logs. This differs from the exception model used by `Indexer`.
 
-## Recommended replacement
+## Run indexing in process
 
 Use {func}`~lauelab.indexing.index_frame` for one frame:
 
@@ -34,14 +34,14 @@ The in-process path:
 
 - Returns `FrameResult` instead of `IndexingResult`.
 - Raises exceptions for invalid input and native failures.
-- Keeps peak and pattern data in memory.
+- Returns peak and pattern data as NumPy arrays.
 - Does not create intermediate text files.
 - Writes XML only when you call an XML method.
 - Has no subprocess timeout because it does not launch the three indexing programs.
 
 ## Parameter mapping
 
-| LaueGo argument | In-process replacement |
+| LaueGo argument | In-process argument or operation |
 |---|---|
 | `geo_file` | `geometry` for `index_frame`, or the first `Indexer` argument |
 | `crystal_file` | `crystal` for `index_frame`, or the second `Indexer` argument |
@@ -73,7 +73,7 @@ In both APIs, `threshold_ratio=None` uses the native default of `4.0`; the LaueG
 | `output_files` | No intermediate-file equivalent |
 | `log` and `command_history` | No subprocess equivalent |
 
-## Migration procedure
+## Switch to in-process indexing
 
 1. Move peak-search values into `PeakParams`.
 2. Move orientation values into `IndexParams`.
@@ -84,4 +84,4 @@ In both APIs, `threshold_ratio=None` uses the native default of `4.0`; the LaueG
 7. Remove assumptions about intermediate peak, pixel-to-q, and indexing files.
 8. Compare migrated results against representative LaueGo output before changing scientific settings.
 
-See the [LaueGo API reference](../reference/lauego.md) for the complete compatibility signature.
+See the [LaueGo API reference](../reference/lauego.md) for the complete subprocess signature.

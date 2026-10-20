@@ -1,8 +1,8 @@
 # Results files
 
-A results file stores every {class}`~lauelab.indexing.FrameResult` from one indexing run in one HDF5 file. Keep this file for later analysis: visualization functions load it directly, and its datasets are accessible with standard HDF5 tools. XML output remains available for software that reads that format; see {ref}`Write XML <results-write-xml>`.
+A results file contains every {class}`~lauelab.indexing.FrameResult` from one indexing run in one HDF5 file. Save this file for analysis: visualization functions load it directly, and its datasets are accessible with standard HDF5 tools. To write XML for tools that read that format, see {ref}`Write XML <results-write-xml>`.
 
-The XML document stores every number as text in a nested element tree, so reading a 100,000-frame wire scan takes tens of seconds and several gigabytes. A results file stores each quantity as one typed array across all frames, and the same scan loads in a fraction of a second.
+In XML, every number is text in a nested element tree, so reading a 100,000-frame wire scan takes tens of seconds and several gigabytes. In a results file, each quantity is one typed array across all frames, and the same scan loads in a fraction of a second.
 
 ## Write a results file
 
@@ -80,7 +80,7 @@ Validation checks the format and version, required datasets, dtypes, shapes, and
 
 Pass `frame_ids` or `n_frames` to compare the output with the expected inputs. An ID mismatch reports the first differing frame.
 
-A structural defect raises {class}`~lauelab.indexing.InvalidResultsFile` with the file path and the failing check. {func}`lauelab.is_results_file` reads only the format marker; a file interrupted while being written still carries the marker, so use the validator before treating a file as complete. A structurally valid file can contain only part of a run. Compare its frame IDs or count with the expected inputs to check completeness.
+The validator raises {class}`~lauelab.indexing.InvalidResultsFile` for a structural defect, with the file path and the failing check. {func}`lauelab.is_results_file` reads only the format marker. An interrupted file can contain this marker, so use the validator before treating the file as complete. A structurally valid file can contain only part of a run. Compare its frame IDs or count with the expected inputs to check completeness.
 
 (results-file-process-pool)=
 ### Write from a process pool
@@ -130,8 +130,8 @@ frames. All HDF5 inputs and the merged output are structurally validated.
 Duplicate identities, mixed integer and string identities, incompatible run
 settings, and differences in geometry or crystal metadata raise
 {class}`~lauelab.indexing.InvalidResultsFile`. Metadata must match exactly,
-including paths and units. Empty input files are allowed, and older files
-without the optional scan-source columns receive the documented absent values.
+including paths and units. Empty input files are allowed. For inputs without
+the optional scan-source columns, the merger writes the documented absent values.
 
 HDF5 arrays are copied in bounded blocks into an uncompressed file, and ragged
 offsets are rebased. Detector images are not read and indexing is not repeated.
@@ -178,15 +178,15 @@ from lauelab.visualization import convert_xml
 output = convert_xml("indexed-scan.xml")
 ```
 
-An existing output raises `FileExistsError` unless you pass `output_path` or `overwrite=True`. Conversion costs one XML load, so convert once and load the results file afterwards.
+`convert_xml` raises `FileExistsError` for an existing destination. Pass a different `output_path` or `overwrite=True`. Conversion requires one XML load; subsequent analysis can load the results file directly.
 
 Conversion writes a unique `<destination>.partial-*` file in the destination directory, then closes and validates it before renaming it to the requested path. A failure removes the partial file and preserves any existing destination. If two conversions target the same path, the second to finish raises `FileExistsError` unless `overwrite=True`.
 
-The exception identifies the failure: a missing document raises `FileNotFoundError`, a malformed one `xml.etree.ElementTree.ParseError`, conflicting run parameters `ValueError`, and a written file that fails validation {class}`~lauelab.indexing.InvalidResultsFile`. A document without geometry or crystal context converts; `validate_results_file` on the output reports `has_geometry_text` and `has_crystal`.
+The converter raises `FileNotFoundError` for a missing document, `xml.etree.ElementTree.ParseError` for malformed XML, `ValueError` for conflicting run parameters, and {class}`~lauelab.indexing.InvalidResultsFile` if the output fails validation. It accepts documents without geometry or crystal context; `validate_results_file` reports `has_geometry_text` and `has_crystal` for the output.
 
 The same publication step is available for your own outputs: write to {func}`lauelab.partial_path`, validate, then {func}`lauelab.publish_file` renames it to the final name and refuses, by default, to replace a file that appeared in the meantime.
 
-The converter records the geometry path from the XML and embeds the geometry text only when that path is readable. A document without crystal information converts without a crystal, and the loaded dataset then rejects pole figures and orientation colors. Run parameters recorded in the XML become `run` attributes; parameters absent from the XML stay absent, and parameters that conflict between steps raise `ValueError`, so convert separate configurations separately.
+The converter records the geometry path from the XML and embeds the geometry text only when that path is readable. It accepts documents without crystal information; plotting functions require crystal information for pole figures and orientation colors. Run parameters recorded in the XML become `run` attributes. Parameters absent from the XML are omitted. The converter raises `ValueError` for conflicting parameters between steps, so convert separate configurations separately.
 
 ## File contents
 
@@ -202,6 +202,6 @@ The converter records the geometry path from the XML and embeds the geometry tex
 
 Peak and pattern rows are grouped by frame; assignment rows are grouped by pattern. The peaks of frame `i` are rows `peak_offsets[i]` to `peak_offsets[i + 1]`; `pattern_offsets` and `assignment_offsets` follow the same rule.
 
-Reciprocal lattices, cell parameters, atom positions, sample positions, depths, and intensity sums are `numpy.float64`. Other floating-point values are `numpy.float32`, which keeps about seven significant digits, or about 0.0001 px for a coordinate on a 2048-pixel detector. Hutch temperature and sample distance keep the values supplied by acquisition with `units="unspecified"`, because the input metadata does not establish a unit. Missing flags are `-1` and missing floating-point values are `NaN`. In the `run` attributes, a parameter given as `None` is also stored as `NaN`: `threshold` for automatic thresholding, `threshold_ratio` for the native default, and `max_peaks` for an unlimited peak search.
+Reciprocal lattices, cell parameters, atom positions, sample positions, depths, and intensity sums are `numpy.float64`. Other floating-point values are `numpy.float32`, with about seven significant digits, or about 0.0001 px for a coordinate on a 2048-pixel detector. Hutch temperature and sample distance are stored as supplied by acquisition with `units="unspecified"`, because the input metadata does not establish a unit. Missing flags are `-1` and missing floating-point values are `NaN`. In the `run` attributes, a parameter given as `None` is also stored as `NaN`: `threshold` for automatic thresholding, `threshold_ratio` for the native default, and `max_peaks` for an unlimited peak search.
 
-The {ref}`reference <results-file-layout>` lists every dataset with its dtype, shape, and units. Provenance that `VisualizationDataset` does not carry, such as the `run` attributes, is read directly with h5py.
+The {ref}`reference <results-file-layout>` lists every dataset with its dtype, shape, and units. Use h5py to read provenance outside `VisualizationDataset`, such as the `run` attributes.

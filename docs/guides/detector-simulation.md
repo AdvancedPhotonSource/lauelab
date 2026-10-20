@@ -1,6 +1,6 @@
 # Add simulation to a detector view
 
-Detector-view simulation predicts missing reflection directions for selected indexed patterns. It keeps measured peaks, indexed assignments, and simulated reflections in separate prepared layers.
+Use detector-view simulation to predict missing reflection directions for selected indexed patterns. Measured peaks, indexed assignments and simulated reflections are prepared as separate layers.
 
 ## Prepare the detector data
 
@@ -42,7 +42,7 @@ frame_xy = (detector_xy - start - (group - 1) / 2) / group
 
 `start` is the zero-based full-detector `(x, y)` origin. `group` contains the detector-pixel grouping factors `(group_x, group_y)`. The half-group term maps each frame pixel to the center of its full-detector pixel group.
 
-The prepared `predicted_xy` values are zero-based frame `(x, y)` pixels. A NumPy image still uses `[y, x]` access and shape `(ny, nx)`. Preparation removes non-finite and off-frame simulated points.
+The prepared `predicted_xy` values are zero-based frame `(x, y)` pixels. A NumPy image uses `[y, x]` indexing and shape `(ny, nx)`. Preparation removes nonfinite and off-frame simulated points.
 
 ## Reuse prepared simulation data
 

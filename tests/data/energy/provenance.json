@@ -1,0 +1,72 @@
+{
+  "approved_departures": [
+    "excluded pixels omitted from sums AND occupancy",
+    "zero input remains valid",
+    "fractional group centers and depth used consistently",
+    "strict correction metadata"
+  ],
+  "array_conventions": "Igor image[p][q]=image[x][y]; NumPy image[y,x]; Igor first dimension / NumPy last dimension varies fastest",
+  "comparison": {
+    "atol": 1e-12,
+    "reason": "float64 vector ray vs scalar atan2 and independent summation order; counts/membership exact",
+    "rtol": 1e-12
+  },
+  "data_kind": "synthetic analytic known-Q rings; NOT measured data or Igor-runtime output",
+  "energy_kev": 12.0,
+  "generator_versions": {
+    "h5py": "3.14.0",
+    "numpy": "2.2.3"
+  },
+  "geometry": {
+    "pixels": [
+      96,
+      80
+    ],
+    "rotation_vector_rad": [
+      0.04,
+      -0.025,
+      0.015
+    ],
+    "size_um": [
+      19200.0,
+      16000.0
+    ],
+    "translation_um": [
+      1500.0,
+      -700.0,
+      40000.0
+    ]
+  },
+  "grid_first_last_count": [
+    0.0,
+    20.0,
+    201
+  ],
+  "hc_kev_nm": 1.239841857,
+  "input_shape_y_x": [
+    80,
+    96
+  ],
+  "noise": "none",
+  "normalization_factor": 5.0,
+  "random_seed": null,
+  "reference_kind": "independent scalar IPF-derived Python, plus analytic tests",
+  "ring_centers_nm_inv": [
+    6.5,
+    13.0
+  ],
+  "roi_y0_y1_x0_x1": [
+    5,
+    73,
+    7,
+    91
+  ],
+  "upstream": {
+    "commit": "69a3b0229dfca2e06a135621391051dd46e5928a",
+    "repository": "https://github.com/34IDE/LaueGo",
+    "sha256": {
+      "microN/EnergyScansN.ipf": "f37a33ff4c4c4f1067e9d26c99d8528b55b2e4c1b7c8056b4aeda476077c204d",
+      "microN/microGeometryN.ipf": "fbb1d18f8e8748a321681de8e8b6c6f1511d4d4b62ec5cdf9a8319b183933c78"
+    }
+  }
+}

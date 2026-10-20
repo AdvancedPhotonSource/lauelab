@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<geoN xmlns="http:example.com/geoN"><Detectors Ndetectors="1">
+<Detector N="2"><Npixels>96 80</Npixels>
+<size unit="mm">19.2 16.0</size>
+<R unit="radian">0.04 -0.025 0.015</R><P unit="mm">1.5 -0.7 40.0</P>
+<ID>SYNTHETIC-Q</ID><note>Synthetic analytic ring phantom, not measured data</note>
+</Detector></Detectors></geoN>

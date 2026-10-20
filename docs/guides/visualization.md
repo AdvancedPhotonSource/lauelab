@@ -61,7 +61,7 @@ The file stores the crystal and the geometry, so maps, pole figures, tables, and
 
 ## Load LaueGo XML
 
-{func}`~lauelab.visualization.load_visualization_xml` reads an `AllSteps` indexing XML document into the same normalized model. Loading parses every element, so a large document takes tens of seconds; convert it once with {func}`~lauelab.visualization.convert_xml` when it will be loaded more than once.
+{func}`~lauelab.visualization.load_visualization_xml` reads an `AllSteps` indexing XML document into the same normalized model. Loading parses every element, so a large document takes tens of seconds. For repeated analysis, convert the XML once with {func}`~lauelab.visualization.convert_xml` and load the results file.
 
 ```python
 from lauelab.visualization import load_visualization_xml, prepare_map
@@ -104,9 +104,9 @@ detected_threshold = DataScope(min_indexed=3, min_detected=5)
 with_unindexed = DataScope(patterns=(0,), min_detected=4, unindexed_frames=True)
 ```
 
-`unindexed_frames=True` keeps the frames that the pattern selection leaves empty, whether they were never indexed or every pattern was filtered out, provided they pass `min_detected`. Maps show them as gray frame-only records and frame-based tables keep their peaks. `patterns="all_frames"` implies it. These records retain their frame IDs and have no associated pattern ID.
+Set `unindexed_frames=True` to include frames with no selected patterns, provided they pass `min_detected`. This includes frames without indexed patterns and frames whose patterns are all filtered out. Maps show them as gray frame-only records, and frame-based tables contain their peaks. `patterns="all_frames"` includes these records automatically. Each record contains its frame ID and has no associated pattern ID.
 
-`patterns="all_frames"` lets `peak_table` include detected peaks from frames with no indexed patterns. Pattern filtering applies only to frames where patterns exist. An empty selection is valid. Prepared arrays keep their documented dimensionality, and tables keep their columns.
+With `patterns="all_frames"`, `peak_table` includes detected peaks from frames with no indexed patterns. Pattern filtering applies only to frames with patterns. An empty selection is valid: prepared arrays have their documented dimensionality, and tables contain their documented columns.
 
 Use `(frame_id, pattern_index)` to identify a pattern and `(frame_id, peak_index)` to identify a peak across selections and views.
 
@@ -195,9 +195,9 @@ map_data = prepare_map(
 frame_only = ~map_data.has_pattern
 ```
 
-A frame-only record has `pattern_indices` equal to {data}`~lauelab.visualization.NO_PATTERN`, `indexed` `False`, real coordinates from frame-based axes, and `NaN` for any pattern-based color. Frame-based values remain available: `"n_patterns"` is `0` there, and a frame-aligned `ScalarColor` or `Axis` supplies its own value. A pattern-aligned `Axis` cannot place such a record and raises. `indexed` is also `False` for a pattern whose orientation could not be derived; `has_pattern` separates the two cases.
+A frame-only record has `pattern_indices` equal to {data}`~lauelab.visualization.NO_PATTERN`, `indexed` `False`, real coordinates from frame-based axes, and `NaN` for any pattern-based color. Frame-based values are available: `"n_patterns"` is `0`, and frame-aligned `ScalarColor` or `Axis` values apply to the record. Preparation raises an error if a pattern-aligned `Axis` is used for a frame-only record. `indexed` is also `False` for a pattern without a derived orientation; use `has_pattern` to distinguish these cases.
 
-`plot_map()` draws frame-only records and orientation-less patterns in the gray `unindexed` trace. For scalar colors the same trace holds every record whose value is `NaN`, and excludes those points from the color range. The record's `customdata` pattern identity is `None`, and {func}`~lauelab.visualization.selection_from_plotly` reports it as a selected frame with no pattern.
+`plot_map()` draws frame-only records and patterns without a derived orientation in the gray `unindexed` trace. For scalar colors, the function also draws every record whose value is `NaN` in this trace and omits those points from the color range. The record's `customdata` pattern identity is `None`, and {func}`~lauelab.visualization.selection_from_plotly` reports it as a selected frame with no pattern.
 
 ## Create Plotly figures
 
@@ -231,7 +231,7 @@ map_data = prepare_map(result_set, axes=("X", "H"), color="goodness")
 map_figure = plot_map(map_data)
 ```
 
-Valid empty selections return a figure with an explanatory annotation. Pole figures retain their unit boundary. Detector views retain their detector boundary.
+The plotting functions return a figure with an explanatory annotation for a valid empty selection. They also draw the unit boundary on pole figures and the detector boundary on detector views.
 
 ### Customize Plotly output
 
@@ -385,7 +385,7 @@ Keep these spaces separate when you combine prepared data with other software:
 
 For grouped data, the frame-to-detector conversion maps a frame coordinate to the center of its full-detector pixel group. Detector slots are physical geometry slots and can be sparse.
 
-The physical names, positive directions, and handedness of the laboratory axes still require beamline review. Do not infer those meanings from `Xlab`, `Ylab`, or `Zlab` alone.
+The physical names, positive directions, and handedness of the laboratory axes require beamline review. Do not infer those meanings from `Xlab`, `Ylab`, or `Zlab` alone.
 
 ## APS 34-ID-E surface presets
 

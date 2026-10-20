@@ -1,6 +1,6 @@
 # Quickstart
 
-This example processes synthetic nickel data shipped with the repository. Run each block from the repository root after installing the package. The data is for API demonstrations and regression tests. A tutorial based on reviewed experimental data will follow.
+This example processes synthetic nickel data included in the repository for API demonstrations and regression tests. Run each block from the repository root after installing the package.
 
 ## Prepare the inputs
 
@@ -109,7 +109,7 @@ XML output is explicit in the in-process API. Writing XML does not create peak, 
 results[3].write_xml("indexed-frame.xml")
 ```
 
-This format exists for compatibility with the established 34-ID-E XML workflow. Use `FrameResult` directly for new Python analysis.
+Use XML to exchange results with 34-ID-E tools that read this format. Use `FrameResult` directly for analysis in Python.
 
 ## Handle errors
 

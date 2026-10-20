@@ -92,7 +92,7 @@ d_k = I_k - I_{k+1}, \qquad k = 0, \dots, N - 3
 
 The final difference `I_{N-2} - I_{N-1}` is never formed. This reproduces the executable's loop bound. A zero difference deposits nothing.
 
-Scan frame `k` is paired with wire positions `w_k` and `w_{k+1}`. The leading edge deposits `d_k` with positive sign. The trailing edge deposits `-d_k`. With `wire_edge="both"`, the kernel performs both deposits for the same difference, each with its own edge depths.
+Scan frame `k` is paired with wire positions `w_k` and `w_{k+1}`. For the leading edge, the kernel deposits `d_k` with positive sign; for the trailing edge, it deposits `-d_k`. With `wire_edge="both"`, it performs both deposits for the same difference, each with its own edge depths.
 
 ## Trapezoid deposit
 
@@ -117,7 +117,7 @@ The deposit is skipped when the trapezoid lies entirely outside the depth grid o
 
 ## Intensity mask
 
-The intensity map is the first scan frame unless array input supplies `intensity_map`. The mask retains a pixel when its intensity-map value is at least a cutoff:
+The intensity map is the first scan frame unless you pass `intensity_map` with array input. The kernel reconstructs pixels whose intensity-map value is at least this cutoff:
 
 ```{math}
 \text{cutoff} = \max\!\left(1,\; \lfloor v_{\lfloor n\,(100 - p)/100 \rfloor} \rfloor\right)

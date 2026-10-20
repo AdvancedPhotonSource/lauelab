@@ -66,6 +66,8 @@ Prepared models copy their arrays and mark them read-only. Their frame and patte
 .. autofunction:: plot_pole_figure
 
 .. autofunction:: plot_detector_view
+
+.. autofunction:: plot_q_distribution
 ```
 
 Each renderer accepts a prepared model or normalized input. `trace_update` changes traces by the roles documented in the [visualization guide](../guides/visualization.md). `layout_update` applies after package defaults.

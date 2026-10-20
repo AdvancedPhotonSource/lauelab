@@ -179,6 +179,11 @@ class FrameMetadata:
         Detector identifier expected to match the selected geometry detector.
     exposure_seconds
         Detector exposure time in seconds.
+    i0_counts, scaler_count_time_seconds, i0_gain
+        Optional ion-chamber counts, scaler duration in seconds, and I0 gain
+        for monochromatic energy reduction. Detector gain is a separate value.
+    intensity_units
+        Unit of the stored pixel values, when known.
 
     Notes
     -----
@@ -202,6 +207,10 @@ class FrameMetadata:
     sample_distance: float | None = None
     detector_id: str | None = None
     exposure_seconds: float | None = None
+    i0_counts: float | None = None
+    scaler_count_time_seconds: float | None = None
+    i0_gain: float | None = None
+    intensity_units: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         """Return the metadata fields whose values are not `None`.

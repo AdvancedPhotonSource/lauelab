@@ -41,7 +41,7 @@ When present, the loader reads processing values from:
 
 HDF5 `start` and `group` values take precedence over values passed to `index()`.
 
-The optional `entry1/depth` dataset supplies the frame's physical depth in µm from its first entry, provided that entry is finite and `depth` was not passed explicitly. An explicit finite `depth`, including `0.0`, overrides the file. Reconstructed per-depth files written by {class}`~lauelab.reconstruct.Reconstructor` and by `reconstructN_cpu` carry this dataset; raw frames normally do not, and a missing or non-finite value means no depth. `FrameResult.depth` records the value that was used. This matches the LaueGo `peaksearch` program, which reads the same dataset into its `$depth` header.
+For HDF5 input, indexing reads the frame's physical depth in µm from the first entry of `entry1/depth`, provided that entry is finite and you do not pass `depth` explicitly. An explicit finite `depth`, including `0.0`, overrides the stored value. Per-depth files written by {class}`~lauelab.reconstruct.Reconstructor` and by `reconstructN_cpu` contain this dataset. Raw frames normally do not, and a missing or nonfinite value means no depth. `FrameResult.depth` contains the value used for indexing. The LaueGo `peaksearch` program reads the same dataset into its `$depth` header.
 
 For a reconstructed frame, obtain the physical depth from the file or the reconstruction result's `depth_um` array. Pass `depth` explicitly when you need to override that value.
 
@@ -55,7 +55,7 @@ from lauelab.indexing import ScanFrame
 result = indexer.index(ScanFrame("run/points/point_1.h5", "scan12_p1", 30))
 ```
 
-Indexing reads the selected frame in its stored dtype, including signed types, and needs no catalog. The point file supplies `start`, `group`, the detector identifier, physical depth, scan number, sample position, and incident energy; an explicit `depth` argument overrides the stored depth. Indexing checks that the point ID in the file matches the reference. `ScanFrame` is serializable and can be passed to indexing workers, which open the file locally. `FrameResult.source` returns the reference, and `FrameResult.input_image` is the point file's path. See [Reconstruct a wire scan](reconstruction.md) to resolve a catalog point ID to its file.
+Indexing reads the selected frame in its stored dtype, including signed types, without opening a catalog. It reads `start`, `group`, detector identifier, physical depth, scan number, sample position and incident energy from the point file. An explicit `depth` argument overrides the stored depth. Indexing checks that the point ID in the file matches the reference. `ScanFrame` is serializable and can be passed to indexing workers, which open the file locally. `FrameResult.source` contains the reference, and `FrameResult.input_image` contains the point file's path. See [Reconstruct a wire scan](reconstruction.md) to resolve a catalog point ID to its file.
 
 ## Region and grouping
 
@@ -98,7 +98,7 @@ mask = load_mask("mask.h5")
 result = indexer.index(frame, mask=mask)
 ```
 
-It returns a boolean array in which `True` marks an excluded pixel. `index()` still checks the shape against the frame.
+It returns a boolean array in which `True` marks an excluded pixel. `index()` checks its shape against the frame.
 
 ## Metadata
 

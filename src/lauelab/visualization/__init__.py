@@ -4,6 +4,7 @@
 
 from .data import DataScope, ResultSet, VisualizationDataset
 from .interaction import PlotlySelection, selection_from_plotly
+from .energy import plot_q_distribution
 from .depth import (
     DEFAULT_ROI_COLORS,
     RoiOverlay,
@@ -76,6 +77,7 @@ __all__ = [
     "plot_detector_view",
     "plot_map",
     "plot_pole_figure",
+    "plot_q_distribution",
     "plot_reference_image",
     "plot_roi_traces",
     "prepare_detector_view",

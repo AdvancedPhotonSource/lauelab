@@ -71,7 +71,7 @@ if wire is not None:
     print(wire.diameter_um, wire.origin_um)
 ```
 
-Reconstruction requires complete wire geometry and raises {class}`~lauelab.indexing.InputError` when it is absent. Indexing continues to accept detector-only geometry files.
+Reconstruction requires complete wire geometry and raises {class}`~lauelab.indexing.InputError` when it is absent. Indexing accepts detector-only geometry files.
 
 ## Validation errors
 

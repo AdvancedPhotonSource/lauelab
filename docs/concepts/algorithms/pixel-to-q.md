@@ -35,7 +35,7 @@ z' = P_z
 The geometry rotation matrix maps this position into the 34-ID-E laboratory frame. If `depth` is supplied in micrometres, the implementation subtracts it from the transformed laboratory z component.
 
 ```{warning}
-The physical sign convention for `depth` and the names and positive directions of the laboratory axes still require 34-ID-E domain verification. Use a geometry and depth convention from the same established workflow.
+The physical sign convention for `depth` and the names and positive directions of the laboratory axes require 34-ID-E domain verification. Use a geometry and depth convention from the same workflow.
 ```
 
 ## Scattering direction

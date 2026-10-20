@@ -256,9 +256,13 @@ class Geometry:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         try:
+            tree = ET.parse(self.path)
+            # Snapshot at load time: downstream scientific results must not
+            # reread a geometry file that may have changed since construction.
+            self._source_xml = ET.tostring(tree.getroot(), encoding="unicode")
             detector_ids = [
                 (node.findtext("{*}ID") or "").strip()
-                for node in ET.parse(self.path).findall(".//{*}Detectors/{*}Detector")
+                for node in tree.findall(".//{*}Detectors/{*}Detector")
             ]
         except OSError as error:
             raise ValueError(f"Failed to load geometry {path}: {error}") from error
@@ -267,6 +271,7 @@ class Geometry:
             # "$tag value" geometry format, which has at most one declaration
             # per detector slot, so the duplicate-ID scan does not apply.
             detector_ids = []
+            self._source_xml = None
         duplicates = sorted({value for value in detector_ids if value and detector_ids.count(value) > 1})
         if duplicates:
             raise ValueError(f"Failed to load geometry {path}: duplicate detector ID {duplicates[0]!r}")

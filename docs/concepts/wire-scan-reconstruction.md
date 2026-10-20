@@ -16,7 +16,7 @@ A reconstruction call needs:
 - A depth range and depth resolution in µm
 - Reconstruction options, or their defaults
 
-The point can be a 34-ID-E multi-image HDF5 file or in-memory arrays. The file path reads frames, wire positions, and acquisition metadata using the conventions described in [Reconstruct a wire scan](../guides/reconstruction.md). The array path accepts already aligned data and applies no file-format bookkeeping.
+Pass a 34-ID-E multi-image HDF5 file or in-memory arrays for the point. For file input, reconstruction reads frames, wire positions and acquisition metadata using the conventions in [Reconstruct a wire scan](../guides/reconstruction.md). For array input, pass aligned frames and wire positions; file-format bookkeeping does not apply.
 
 The result contains the reconstructed depth coordinates, the summed intensity at each depth, per-stripe timings, and optional retained images with shape `(n_depths, rows, columns)` and dtype `numpy.float64`. File reconstruction can also write one HDF5 file for each depth and a summary text file.
 

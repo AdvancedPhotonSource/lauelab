@@ -1,6 +1,6 @@
 # Development
 
-This page records the current local workflow for Python, native, test, and documentation changes.
+Use this workflow to build, test and document Python and native code changes.
 
 ## Build the project
 
@@ -53,13 +53,13 @@ Tests run against the installed package, never against `src/` directly. Native t
 
 CI runs with `--require-native`. That option fails the session when `liblaue.so` is missing from the installed package or when any test skips for another reason.
 
-All fixtures are in Git and are synthetic. `tests/data/synthetic/` holds simulated Laue frames and the LaueGo program outputs for them (see its README); the indexing tests compare the in-process indexer against those outputs.
+The fixtures in Git are synthetic. `tests/data/synthetic/` contains simulated Laue frames and their LaueGo program outputs (see its README). The indexing tests compare the in-process indexer against those outputs.
 
 The `integration` marker identifies tests that run compiled command-line programs. Exclude them with `-m "not integration"`.
 
 ### CPU reconstruction reference
 
-`tests/data/reconstruction/` holds synthetic numerical references for `reconstructN_cpu`. `tests/test_reconstruct.py` checks the executable, and `tests/test_reconstructor.py` cross-checks the in-process driver against the same files. Do not regenerate a reference to make a build change pass.
+`tests/data/reconstruction/` contains synthetic numerical references for `reconstructN_cpu`. `tests/test_reconstruct.py` checks the executable, and `tests/test_reconstructor.py` cross-checks the in-process driver against the same files. Do not regenerate a reference to make a build change pass.
 
 The full-size Twin2 fixture is not in the repository. Set `LAUELAB_TWIN2_FIXTURE` to a directory holding `Twin2_wire_1.h5` through `Twin2_wire_3.h5`, `geoN_2023-04-06_03-07-11_cor6.xml`, and the `reference_rec8_point1/` output directory. The real-data tests and the performance script skip with `Twin2 wire-scan fixture not available` when the variable is unset or a file is missing. Run the real-data checks explicitly with:
 
@@ -120,9 +120,9 @@ The workflow does not publish or keep build artifacts.
 
 ## HDF5 file conventions
 
-Indexing results and reconstructed point files use shared conventions for root attributes, versioning, units, and ragged data. These also apply to scan catalogs. See [HDF5 file conventions](hdf5-conventions.md).
+Indexing results, Q-distribution profiles, reconstructed point files and scan catalogs use shared conventions for root attributes, versioning, units and ragged data. See [HDF5 file conventions](hdf5-conventions.md).
 
-See [Reconstruction scan format](reconstruction-scan-format.md) for the scan catalog and point-file layouts and stored values, and [Reconstruction scan protocol](reconstruction-scan-protocol.md) for preparation, coordination, statuses, and readers. [Inspect a reconstructed point](../guides/depth-inspection.md) defines ROIs.
+See [Q-distribution HDF5 format](energy-format.md) for profile arrays, settings and provenance. [Reconstruction scan format](reconstruction-scan-format.md) specifies the scan catalog and point-file layouts and stored values. [Reconstruction scan protocol](reconstruction-scan-protocol.md) describes preparation, coordination, statuses and readers. [Inspect a reconstructed point](../guides/depth-inspection.md) defines ROIs.
 
 ```{toctree}
 :hidden:
@@ -131,4 +131,5 @@ See [Reconstruction scan format](reconstruction-scan-format.md) for the scan cat
 hdf5-conventions
 reconstruction-scan-format
 reconstruction-scan-protocol
+energy-format
 ```

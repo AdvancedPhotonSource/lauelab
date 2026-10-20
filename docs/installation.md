@@ -131,7 +131,7 @@ A default installation builds all of these:
 | `peaksearch`, `pix2qs`, `euler` | `lauelab/indexing/bin/` | Yes. Used by the LaueGo compatibility functions. |
 | `reconstructN_cpu` | `lauelab/reconstruct/bin/` | Yes. Used by `reconstruct()`. |
 
-The in-process indexing API is the main path for new code. The LaueGo compatibility functions and their command-line programs remain supported for existing workflows. The build stops with an error when a required dependency is missing or a component fails to compile. It does not install a partial package.
+The package includes the in-process indexing API and the supported LaueGo subprocess interfaces and command-line programs. The build stops with an error when a required dependency is missing or a component fails to compile. It does not install a partial package.
 
 Native code is compiled for the generic x86-64 baseline with SSE2. The same installed files run on any x86-64 Linux machine that has compatible GSL and HDF5 libraries.
 

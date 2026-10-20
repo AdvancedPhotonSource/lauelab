@@ -1,7 +1,7 @@
 # Results
 
-`FrameResult` owns Python copies of native indexing output. A result with no
-identified patterns is valid and can still contain detected peaks and frame
+`FrameResult` contains Python copies of native indexing output. A result with no
+identified patterns is valid and can contain detected peaks and frame
 statistics.
 
 ## Results files
@@ -37,13 +37,13 @@ See [Results files](../guides/results-file.md) for writing, loading, and convert
 (results-file-layout)=
 ### File layout
 
-Format `lauelab-indexing-results`, version 1. Root attributes are `format`, `version`, `lauelab_version`, `created`, and, for a converted file, `source`. The `run` group has no datasets; its attributes are `program`, `detector_index`, `detector_id`, `cosmic_filter`, and one attribute per {class}`~lauelab.indexing.PeakParams` and {class}`~lauelab.indexing.IndexParams` field. The `crystal` group carries `name`, `space_group`, `setting`, and `source` as attributes and is absent when the run had no crystal. The `geometry` group carries `path` as an attribute.
+Format `lauelab-indexing-results`, version 1. Root attributes are `format`, `version`, `lauelab_version`, `created`, and, for a converted file, `source`. The `run` group has no datasets; its attributes are `program`, `detector_index`, `detector_id`, `cosmic_filter`, and one attribute per {class}`~lauelab.indexing.PeakParams` and {class}`~lauelab.indexing.IndexParams` field. The `crystal` group has `name`, `space_group`, `setting`, and `source` attributes and is absent when the run has no crystal. The `geometry` group has a `path` attribute.
 
 A merged file has a `merged_sources` root attribute listing its input files in
 order. Its `created` and `lauelab_version` describe the merge, and it has no
 single-document `source` attribute.
 
-A converted file carries only the run attributes the XML recorded, when present: `program`, `peak_program`, `cosmic_filter`, `max_rfactor`, `max_peaks`, `min_separation`, `peak_shape`, `mask_file`, `kev_max_calc`, `kev_max_test`, `angle_tolerance_deg`, `cone_deg`, and `hkl_prefer`.
+A converted file contains only the run attributes present in its XML input: `program`, `peak_program`, `cosmic_filter`, `max_rfactor`, `max_peaks`, `min_separation`, `peak_shape`, `mask_file`, `kev_max_calc`, `kev_max_test`, `angle_tolerance_deg`, `cone_deg`, and `hkl_prefer`.
 
 `n` is the row count of the group. Rows of `peaks`, `patterns`, and `assignments` are grouped by owner; the rows of owner `i` are `offsets[i]` to `offsets[i + 1]` of the matching offsets dataset, which has one more entry than there are owners. Absent values are `NaN` for floating-point datasets, `-1` for `scan_numbers`, `beam_bad`, and `light_on`, and the empty string for string datasets. Coordinates in `peaks` are zero-based frame pixel `(x, y)` values.
 

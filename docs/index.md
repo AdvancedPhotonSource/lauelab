@@ -1,11 +1,11 @@
 # lauelab
 
-`lauelab` provides Python interfaces for processing Laue diffraction data at APS beamline 34-ID-E. It indexes crystal orientations, reconstructs wire scans into depth-resolved images, predicts detector reflections, and prepares maps, pole figures, detector overlays, and tables. Visualization functions accept current indexing results, results files, or LaueGo XML.
+`lauelab` provides Python interfaces for processing Laue diffraction data at APS beamline 34-ID-E. It indexes crystal orientations, reconstructs wire scans into depth-resolved images, reduces monochromatic images to intensity-versus-Q profiles, predicts detector reflections, and prepares maps, pole figures, detector overlays, and tables. Visualization functions accept in-memory indexing results, results files, or LaueGo XML.
 
 Built on [LaueGo](https://github.com/34IDE/LaueGo), developed by Jon Z. Tischler and collaborators. See [acknowledgments and citations](acknowledgments.md).
 
 ```{note}
-`lauelab` is alpha software under active development. The documented indexing, reconstruction, and visualization APIs are the supported interfaces, but behavior can change before a stable release. The current source build targets Linux and requires native C build tools and scientific libraries.
+`lauelab` is alpha software. The public APIs documented here are supported interfaces, and their behavior can change before a stable release. The source build targets Linux and requires native C build tools and scientific libraries.
 ```
 
 ```{toctree}
@@ -29,6 +29,7 @@ Install the package from source, then follow one frame through indexing, visuali
 - [Install lauelab](installation.md)
 - [Index your first frame](quickstart.md)
 - [Reconstruct a wire scan](guides/reconstruction.md)
+- [Plot monochromatic intensity versus Q](guides/energy.md)
 - [Prepare maps, figures, and tables](guides/visualization.md)
 - [Simulate reflections for an indexed orientation](guides/simulation.md)
 
@@ -51,6 +52,6 @@ Use the task-oriented guides when you need to select a detector, define a crysta
 
 The API reference contains the exact supported signatures and result fields. The guides explain when to use them and which conventions affect the result.
 
-## Existing code
+## Subprocess indexing
 
-The subprocess-based `lauego` function remains available for existing workflows. New code should use {func}`~lauelab.indexing.index_frame` or {class}`~lauelab.indexing.Indexer`. See [LaueGo interfaces](lauego/index.md) for the behavioral differences.
+Use `lauego` to run the `peaksearch`, `pix2qs` and `euler` programs as subprocesses. For in-process indexing with NumPy results, use {func}`~lauelab.indexing.index_frame` or {class}`~lauelab.indexing.Indexer`. See [LaueGo interfaces](lauego/index.md) to compare arguments, outputs and error handling.
