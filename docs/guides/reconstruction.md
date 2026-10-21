@@ -272,6 +272,62 @@ Assign each task once. If a worker is lost, record a failed outcome for its task
 
 `finish()` requires an outcome for every dispatched task. Pass `cancelled=True` to finish before every task was dispatched. Leaving the `with` block without `finish()` records the run as `failed`. [Reconstruction scan protocol](../development/reconstruction-scan-protocol.md) describes these steps and the catalog statuses.
 
+### Add points as they arrive
+
+Start with no inputs when acquisition is still running. Admit a point only after your acquisition or transfer system confirms that its input is complete and immutable. Registration order determines its catalog index; an acquisition point number can be used as its independent `point_id`.
+
+```python
+from lauelab.reconstruct import prepare_scan, reconstruct_point
+
+with prepare_scan(
+    [], "live-scan",
+    geometry="tests/data/geo/geoN_2022-03-29_14-15-05.xml",
+    detector=0,
+    depth_range=(-25.0, 25.0),
+) as live_scan:
+    # In an application, repeat this block for each completed input arrival.
+    live_task = live_scan.add("point_1.h5", point_id="1")
+    state = live_scan.export_state()
+    # Persist state atomically before dispatch or catalog publication.
+    live_scan.record_dispatch(live_task)
+    live_outcome = reconstruct_point(live_task, num_threads=4)  # Run on your worker.
+    # Persist outcome before recording it on the coordinator.
+    live_scan.record(live_outcome)
+    live_scan.snapshot(force=True)
+    statuses = live_scan.outcomes  # A tuple; no files are opened.
+    # Finish only after acquisition ends and dispatched tasks have settled.
+    live_result = live_scan.finish()
+```
+
+`add` reads metadata, captures the frozen recipe in a new task, and returns without publishing or scheduling work. Failed admission raises without adding a row. Expected future inputs are kept in your acquisition manifest until they are ready; they do not need placeholder point files. New snapshots append points and update statuses, while published point files remain unchanged. Reopen `ScanReader` to see the next snapshot.
+
+`prepare_scan([])` is valid, but `finish()` requires at least one point. Use `finish(cancelled=True)` if acquisition ends without any ready input. `reconstruct_scan([])` remains an error.
+
+For recovery, save `scan.export_state()` using your application's atomic storage. It round-trips through `json.dumps(state, allow_nan=False)` and contains no raw images. Also save worker receipts, for example with `dataclasses.asdict(outcome)`. This small example simulates a controller stopping after a worker publishes its output and its receipt is saved, before the outcome is recorded:
+
+```python
+from dataclasses import asdict
+import json
+from lauelab.reconstruct import PointOutcome, PreparedScan, prepare_scan, reconstruct_point
+
+pending_scan = prepare_scan(
+    ["point_1.h5"], "recovering",
+    geometry="tests/data/geo/geoN_2022-03-29_14-15-05.xml",
+    detector=0, depth_range=(-25.0, 25.0),
+)
+state = json.loads(json.dumps(pending_scan.export_state(), allow_nan=False))
+recovery_outcome = reconstruct_point(pending_scan.tasks[0], num_threads=4)
+receipt_values = [asdict(recovery_outcome)]
+# In an application, load state and receipts from durable storage after restart.
+receipts = [PointOutcome(**values) for values in receipt_values]
+with PreparedScan.restore(state, outcomes=receipts) as recovered_scan:
+    # Reconcile pending/writing tasks before dispatching more work.
+    recovered_scan.snapshot(force=True)
+    recovered_result = recovered_scan.finish()
+```
+
+Restoration validates completed files without the original raw inputs or geometry file. It writes nothing until you publish and provides no writer lock. It requires the same paths and package/native version tags. Exact repeated receipts are accepted during restore; conflicting receipts, terminal progress missing from the receipt history, and unrecorded final outputs require explicit reconciliation. The application owns durable storage, exclusive run ownership, and worker recovery. See {ref}`checkpoints-and-receipt-replay`.
+
 ### Index frames from a scan
 
 A {class}`~lauelab.indexing.ScanFrame` contains the point file, the point ID, and the depth index of a stored frame. {meth}`ScanReader.point_path() <lauelab.reconstruct.ScanReader.point_path>` resolves a catalog point ID to its file. {meth}`Indexer.index() <lauelab.indexing.Indexer.index>`, `index_many()`, and {meth}`Indexer.iter_index() <lauelab.indexing.Indexer.iter_index>` accept a `ScanFrame` wherever they accept a frame path.

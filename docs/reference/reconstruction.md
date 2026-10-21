@@ -44,7 +44,7 @@ A wire axis exactly parallel to the positioner x axis, with a zero wire rotation
 .. autofunction:: prepare_scan
 
 .. autoclass:: PreparedScan
-   :members: record_dispatch, record, snapshot, finish, close
+   :members: add, outcomes, export_state, restore, record_dispatch, record, snapshot, finish, close
 
 .. autoclass:: PointTask
 

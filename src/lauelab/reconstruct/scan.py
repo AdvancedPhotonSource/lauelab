@@ -8,11 +8,14 @@ from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import io
 import logging
+import math
 import multiprocessing
+from numbers import Real
 import os
 from pathlib import Path
 import signal
@@ -161,7 +164,8 @@ class PointOutcome:
         Identifier assigned to the point.
     status : str
         ``"complete"`` or ``"failed"`` from :func:`reconstruct_point`. A scan
-        result also reports ``"interrupted"`` and ``"unattempted"`` points.
+        result also reports ``"interrupted"`` and ``"unattempted"`` points;
+        a running coordinator reports ``"pending"`` and ``"writing"`` too.
     error : str or None
         Error message when reconstruction failed.
     seconds : float
@@ -199,8 +203,8 @@ class ScanResult:
 
     @property
     def complete(self) -> bool:
-        """Whether every point is complete."""
-        return all(outcome.status == "complete" for outcome in self.outcomes)
+        """Whether at least one point exists and every point is complete."""
+        return bool(self.outcomes) and all(outcome.status == "complete" for outcome in self.outcomes)
 
 
 def _shared_configuration(geometry, detector, reconstructor_kwargs):
@@ -285,12 +289,21 @@ def _point_task(source, output, *, geometry, detector, point_id=None, compressio
 
 def _reconstructor(task: PointTask, num_threads: int | None) -> Reconstructor:
     """Build a reconstructor from the geometry text embedded in ``task``."""
-    suffix = Path(task.geometry_path).suffix or ".xml"
+    return _configured_reconstructor({
+        "geometry_path": task.geometry_path, "geometry_xml": task.geometry_xml,
+        "detector": task.detector, "settings": task.settings,
+    }, num_threads)
+
+
+def _configured_reconstructor(configuration, num_threads=1) -> Reconstructor:
+    """Inspect/execute with frozen geometry even after its source is removed."""
+    suffix = Path(configuration["geometry_path"]).suffix or ".xml"
     with tempfile.TemporaryDirectory(prefix="lauelab-geometry-") as directory:
         path = Path(directory) / f"geometry{suffix}"
-        path.write_text(task.geometry_xml)
+        path.write_text(configuration["geometry_xml"])
         geometry = Geometry(path)
-    return Reconstructor(geometry, task.detector, num_threads=num_threads, **task.settings)
+    return Reconstructor(geometry, configuration["detector"], num_threads=num_threads,
+                         **configuration["settings"])
 
 
 def _check_unchanged(task: PointTask, info, reconstructor: Reconstructor) -> np.ndarray:
@@ -329,6 +342,12 @@ def _check_point_file(path: Path, task: PointTask) -> None:
                   "source_path": point.source_path, "raw_slices": point.raw_slices}
         for name, expected_value in expected_values.items():
             if not _metadata_equal(values[name], expected_value):
+                raise InvalidScanFile(f"{path}: {name} disagrees with the prepared task")
+        for name in ("scan_number", "sample_position", "energy_kev"):
+            expected_value = getattr(task, name)
+            if name == "sample_position":
+                expected_value = [np.nan if value is None else value for value in expected_value]
+            if not _metadata_equal(getattr(point, name), expected_value):
                 raise InvalidScanFile(f"{path}: {name} disagrees with the prepared task")
 
 
@@ -531,6 +550,34 @@ def _empty_catalog(n_points: int) -> dict:
     return catalog
 
 
+def _set_point_row(catalog, index, source, point_id, point_path, description=None, error=""):
+    """Populate one row using the same rules for batch, admission, and restore."""
+    catalog["/points/point_ids"][index] = point_id
+    catalog["/points/paths"][index] = point_path
+    catalog["/points/source_paths"][index] = os.fspath(source)
+    if description is None:
+        catalog["/points/statuses"][index] = int(PointStatus.FAILED)
+        catalog["/points/errors"][index] = error
+        return
+    catalog["/points/scan_numbers"][index] = _missing(description["scan_number"], -1)
+    catalog["/points/sample_positions"][index] = [
+        np.nan if value is None else value for value in description["sample_position"]
+    ]
+    catalog["/points/energies_kev"][index] = _missing(description["energy_kev"], np.nan)
+    catalog["/points/shapes"][index] = (description["n_depths"], *description["image_shape"])
+    catalog["/points/depth_bounds"][index] = description["depth_bounds_um"]
+    catalog["/points/dtypes"][index] = description["pixel_type"]
+
+
+def _catalog_request(configuration, version=None):
+    return {
+        "native_version": native_version() if version is None else version,
+        "parameters": parameter_values(configuration["detector"], configuration["settings"]),
+        "geometry_path": configuration["geometry_path"],
+        "geometry_xml": configuration["geometry_xml"],
+    }
+
+
 class PreparedScan:
     """Track point outcomes and publish the scan catalog.
 
@@ -555,15 +602,18 @@ class PreparedScan:
     tasks : tuple of PointTask
         Tasks of the points whose inputs passed inspection, in manifest order.
         Points that failed inspection are recorded in the catalog and have no
-        task.
+        task. Successful :meth:`add` calls append tasks; an earlier tuple remains
+        an earlier snapshot. Treat tasks and their settings as read-only.
     """
 
     def __init__(self, directory: Path, tasks: tuple[PointTask, ...], request: dict,
-                 catalog: dict) -> None:
+                 catalog: dict, configuration: dict) -> None:
         self.directory = directory
         self.path = directory / layout.SCAN_FILENAME
         self.tasks = tasks
         self._request = request
+        self._configuration = deepcopy(configuration)
+        self._inspector = None
         self._catalog = catalog
         # Keep independent settings dictionaries: exported tasks can be edited
         # or rebuilt by an external scheduler, but cannot change this request.
@@ -574,9 +624,108 @@ class PreparedScan:
         self._published = False
         self._dirty = True
         self._last_snapshot = 0.0
+        self._restoring = False
 
     def __reduce__(self):
         raise TypeError("a PreparedScan belongs to the process that prepared it; send its tasks")
+
+    @property
+    def outcomes(self) -> tuple[PointOutcome, ...]:
+        """Current statuses in catalog order, without opening files.
+
+        Includes pending/writing tasks and batch inspection failures. The tuple
+        and its frozen outcomes are snapshots; later changes do not alter them.
+        """
+        return self._outcomes()
+
+    def add(self, path, *, point_id=None) -> PointTask:
+        """Inspect a ready input and append its immutable task without publishing.
+
+        Uses the settings and geometry captured by :func:`prepare_scan`. The
+        task's index is registration order, not an acquisition point number.
+        A failed inspection or duplicate identity/source/output raises and
+        leaves the registry unchanged. Input inspection reads metadata only;
+        the caller establishes that acquisition is complete and immutable.
+
+        Persist :meth:`export_state` before dispatch or publication. Call
+        :meth:`snapshot` to publish pending changes. No work is scheduled here.
+
+        Raises
+        ------
+        InputError
+            The scan ended, the identity/source/output repeats or is invalid,
+            or the input metadata is invalid.
+        OSError
+            The ready input cannot be read.
+        """
+        self._require_running()
+        source = Path(os.path.abspath(path))
+        point_id = _point_ids(None if point_id is None else [point_id], [source])[0]
+        sources = [Path(value) for value in self._catalog["/points/source_paths"]]
+        if os.fspath(source) in self._catalog["/points/source_paths"]:
+            raise InputError(f"input {source} is already registered")
+        if point_id in self._catalog["/points/point_ids"]:
+            raise InputError(f"point ID {point_id!r} is already registered")
+        point_path = _point_paths([*sources, source])[-1]
+        output = self.directory / point_path
+        if output.exists() or partial_path(output).exists():
+            raise FileExistsError(f"point output or private file already exists: {output}")
+        if self._inspector is None:
+            self._inspector = _configured_reconstructor(self._configuration)
+        description = _inspect(source, self._inspector)
+        index = len(sources)
+        task = PointTask(point_id=point_id, index=index, source=os.fspath(source),
+                         output=os.fspath(output),
+                         **self._configuration, **description)
+        # Construct a candidate before committing any public task/row changes.
+        catalog = _empty_catalog(index + 1)
+        for name, values in self._catalog.items():
+            catalog[name][:index] = values
+        _set_point_row(catalog, index, source, point_id, point_path, description)
+        self._catalog = catalog
+        self.tasks = (*self.tasks, task)
+        self._by_index[index] = replace(task)
+        self._dirty = True
+        return task
+
+    def export_state(self) -> dict:
+        """Return detached, versioned, strict-JSON-compatible control state.
+
+        The caller owns atomic persistence and writer exclusion. Save newly
+        registered tasks before dispatch; persist worker receipts before
+        :meth:`record`. This does not write a checkpoint or publish a catalog.
+        State contains frozen geometry/settings and metadata, never pixels or
+        native handles. Round-trip it without editing its internal structure.
+        """
+        from ._scan_state import export_state
+
+        return export_state(self)
+
+    @classmethod
+    def restore(cls, state, *, outcomes=()) -> "PreparedScan":
+        """Restore an unfinished scan and replay durable receipts without writing.
+
+        State is from :meth:`export_state`; outcomes are saved PointOutcome
+        objects. Exact receipt replays are allowed, conflicting/unknown outcomes
+        are rejected. Completed point files are validated without raw input
+        or original geometry access. A published terminal state cannot regress.
+
+        The directory/mount paths and package/native version tags must match.
+        The caller reconciles queue/worker ownership before redispatch. Orphan
+        outputs and private partial files are preserved for explicit recovery.
+        This does not dispatch, clean up, publish, or provide a writer lock.
+
+        Raises
+        ------
+        InputError
+            State, versions, identities, receipt history, or existing catalog
+            disagree, or the run has already ended.
+        InvalidScanFile, OSError
+            A catalog or recorded complete point is invalid or unavailable.
+        """
+        from ._scan_state import restore_state
+
+        return restore_state(state, outcomes, cls)
 
     def __enter__(self) -> "PreparedScan":
         return self
@@ -613,7 +762,7 @@ class PreparedScan:
         Publication errors propagate; the previous snapshot remains available
         and pending changes remain in memory.
         """
-        if not self._dirty:
+        if self._restoring or not self._dirty:
             return False
         if not force and perf_counter() - self._last_snapshot < _SNAPSHOT_SECONDS:
             return False
@@ -687,11 +836,22 @@ class PreparedScan:
             If the point file cannot be opened or the catalog cannot be
             published. The previous catalog snapshot is kept.
         """
+        if not isinstance(outcome, PointOutcome):
+            raise InputError("record requires a PointOutcome")
         task = self._task(outcome.index, outcome.point_id)
         self._require_running()
         status = self._status(task.index)
         if status not in (PointStatus.PENDING, PointStatus.WRITING):
             raise InputError(f"point {task.point_id!r} is already recorded as {status.name.lower()}")
+        if (type(outcome.index) is not int
+                or isinstance(outcome.seconds, (bool, np.bool_))
+                or not isinstance(outcome.seconds, Real) or not math.isfinite(outcome.seconds)
+                or outcome.seconds < 0):
+            raise InputError("a point outcome requires an integer index and a finite nonnegative duration")
+        if ((outcome.status == "complete" and outcome.error is not None)
+                or (outcome.status == "failed" and (outcome.output is not None
+                    or not isinstance(outcome.error, str)))):
+            raise InputError("only a complete outcome or a failed outcome with an error and no output is recorded")
         if outcome.status == "complete":
             if outcome.output != task.output:
                 raise InputError(
@@ -742,6 +902,8 @@ class PreparedScan:
         """
         self._require_running()
         statuses = self._catalog["/points/statuses"]
+        if not len(statuses) and not cancelled:
+            raise InputError("an empty scan cannot finish successfully; cancel it explicitly")
         unsettled = int((statuses == PointStatus.WRITING).sum())
         if unsettled:
             raise InputError(f"{unsettled} dispatched point(s) have no recorded outcome")
@@ -791,7 +953,8 @@ def prepare_scan(
     ----------
     paths
         Input 34-ID-E multi-image HDF5 point files, in manifest order. Each is
-        made absolute against the current directory.
+        made absolute against the current directory. An empty sequence prepares
+        a running scan whose inputs can be admitted through PreparedScan.add.
     directory : pathlib.Path or str
         Scan directory. It must not exist or must be empty; it receives
         ``scan.h5`` and ``points/<input stem>.h5`` for each input.
@@ -821,7 +984,7 @@ def prepare_scan(
     Raises
     ------
     InputError
-        If there are no inputs; the shared configuration, ``point_ids``, or
+        If the shared configuration, ``point_ids``, or
         ``compression`` is invalid; ``num_threads`` is passed; or an input
         stem is unsafe or two inputs would write the same point file.
     FileExistsError
@@ -835,8 +998,6 @@ def prepare_scan(
     inspection reads metadata without loading frames.
     """
     sources = [Path(os.path.abspath(path)) for path in paths]
-    if not sources:
-        raise InputError("paths must name at least one input file")
     point_ids = _point_ids(point_ids, sources)
     _check_compression(compression)
     reconstructor, shared = _shared_configuration(geometry, detector, reconstructor_kwargs)
@@ -849,36 +1010,24 @@ def prepare_scan(
     catalog = _empty_catalog(len(sources))
     tasks = []
     for index, (source, point_id, point_path) in enumerate(zip(sources, point_ids, point_paths)):
-        catalog["/points/point_ids"][index] = point_id
-        catalog["/points/paths"][index] = point_path
-        catalog["/points/source_paths"][index] = os.fspath(source)
         try:
             row = _inspect(source, reconstructor)
         except EXPECTED_POINT_ERRORS as error:
-            catalog["/points/statuses"][index] = int(PointStatus.FAILED)
-            catalog["/points/errors"][index] = str(error)
+            _set_point_row(catalog, index, source, point_id, point_path, error=str(error))
             continue
         tasks.append(PointTask(
             point_id=point_id, index=index, source=os.fspath(source),
             output=os.fspath(directory / point_path), compression=compression,
             **shared, **row,
         ))
-        catalog["/points/scan_numbers"][index] = _missing(row["scan_number"], -1)
-        catalog["/points/sample_positions"][index] = row["sample_position"]
-        catalog["/points/energies_kev"][index] = _missing(row["energy_kev"], np.nan)
-        catalog["/points/shapes"][index] = (row["n_depths"], *row["image_shape"])
-        catalog["/points/depth_bounds"][index] = row["depth_bounds_um"]
-        catalog["/points/dtypes"][index] = row["pixel_type"]
+        _set_point_row(catalog, index, source, point_id, point_path, row)
 
-    request = {
-        "native_version": native_version(),
-        "parameters": parameter_values(shared["detector"], shared["settings"]),
-        "geometry_path": shared["geometry_path"],
-        "geometry_xml": shared["geometry_xml"],
-    }
+    configuration = {**shared, "compression": compression}
+    request = _catalog_request(configuration)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / layout.POINT_DIRECTORY).mkdir()
-    scan = PreparedScan(directory, tuple(tasks), request, catalog)
+    scan = PreparedScan(directory, tuple(tasks), request, catalog, configuration)
+    scan._inspector = reconstructor
     scan._publish()
     return scan
 
@@ -1112,6 +1261,8 @@ def reconstruct_scan(
         raise InputError("progress must be callable or None")
     if should_stop is not None and not callable(should_stop):
         raise InputError("should_stop must be callable or None")
+    if not len(paths):
+        raise InputError("paths must name at least one input file")
     num_threads = threads_per_worker or max(1, physical_core_count() // workers)
     with prepare_scan(paths, directory, geometry=geometry, detector=detector, point_ids=point_ids,
                       compression=compression, **reconstructor_kwargs) as scan:

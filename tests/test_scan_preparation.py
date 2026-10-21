@@ -269,9 +269,12 @@ def test_invalid_shared_configuration_is_rejected_before_writing(tmp_path, chang
     assert not (tmp_path / "out").exists()
 
 
-def test_empty_input_list_is_rejected(tmp_path):
-    with pytest.raises(InputError, match="at least one input"):
-        _prepare([], tmp_path / "out")
+def test_empty_preparation_publishes_a_running_catalog(tmp_path):
+    with _prepare([], tmp_path / "out") as scan:
+        summary = validate_scan_file(scan.path)
+        assert (summary.run_status, summary.n_points) == ("running", 0)
+        assert scan.tasks == scan.outcomes == ()
+        scan.finish(cancelled=True)
 
 
 def test_nonempty_or_non_directory_destinations_are_rejected(tmp_path):

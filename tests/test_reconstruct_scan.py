@@ -524,7 +524,7 @@ def test_guide_scan_examples_run_as_documented(tmp_path, monkeypatch, capsys):
     (tmp_path / "tests").symlink_to(LIBRARY / "tests")
     monkeypatch.chdir(tmp_path)
     blocks = _guide_blocks("## Reconstruct a scan\n", "## Handle failures")
-    assert len(blocks) == 7
+    assert len(blocks) == 9
     namespace = {}
     for block in blocks:
         exec(compile(block, "docs/guides/reconstruction.md", "exec"), namespace)
@@ -535,6 +535,9 @@ def test_guide_scan_examples_run_as_documented(tmp_path, monkeypatch, capsys):
     ]
     assert validate_scan_file("run/scan.h5").run_status == "finished"
     assert validate_scan_file("scheduled/scan.h5").run_status == "finished"
+    assert namespace["live_result"].complete and namespace["recovered_result"].complete
+    assert validate_scan_file("live-scan/scan.h5").n_points == 1
+    assert validate_scan_file("recovering/scan.h5").run_status == "finished"
     assert namespace["outcome"].status == "complete"
     assert Path("single/point_1.h5").is_file() and Path("run/indexed.h5").is_file()
     assert len(namespace["paths"]) == 52

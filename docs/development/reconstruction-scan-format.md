@@ -43,13 +43,15 @@ The datasets added by lauelab have the form of the acquisition values: a single 
 
 ## Identities
 
-A frame is selected by its point and its depth index. The catalog entries are in the input order, which is fixed when the scan is prepared.
+A frame is selected by its point and its depth index. The initial catalog entries are in input order. For an incremental scan, each successful `PreparedScan.add` appends one entry in registration order. Existing indices and point files never change. Acquisition order and sample coordinates are independent of registration order; use the point IDs and acquisition metadata to place points in a view.
+
+A running catalog can contain zero points. It lists only registered inputs, whose metadata has been inspected; expected future inputs belong to the caller's acquisition manifest. A finished catalog must contain at least one point. These rules use the same version-2 datasets and point-file layout as a batch scan.
 
 | Identity | Type | Meaning |
 | --- | --- | --- |
 | Point ID | string | Unique, non-empty identifier of a point within its scan. Defaults to the input stem. It is independent of the point filename. |
-| Manifest index | zero-based integer | Position of the point in the input order. Every dataset under `/points` uses this order. |
-| Point path | string | Location of the point file relative to the scan directory. It is assigned when the scan is prepared, whatever the point's outcome. |
+| Manifest index | zero-based integer | Position of the point in registration order, initially the input order. Every dataset under `/points` uses this order. |
+| Point path | string | Location of the point file relative to the scan directory. It is assigned when the point is registered, whatever the point's outcome. |
 | Depth index | zero-based integer | Position of a frame in the point's `(n_depths, ny, nx)` stack. |
 | Physical depth | `numpy.float64`, µm | Depth along the incident beam from the Si origin of the geometry file. It is `depth_um[depth index]`. |
 

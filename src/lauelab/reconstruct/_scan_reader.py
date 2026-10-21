@@ -232,8 +232,10 @@ def _load_catalog(source: h5py.File) -> tuple[RunStatus, tuple[PointEntry, ...]]
     if not isinstance(statuses, h5py.Dataset):
         raise InvalidScanFile("catalog: dataset '/points/statuses' is missing")
     n_points = statuses.shape[0] if statuses.ndim == 1 else -1
-    if n_points < 1:
-        raise InvalidScanFile("catalog: a scan has at least one point")
+    if n_points < 0:
+        raise InvalidScanFile("catalog: point statuses must be one-dimensional")
+    if n_points == 0 and run_status == RunStatus.FINISHED:
+        raise InvalidScanFile("catalog: a finished scan has at least one point")
     for name, spec in layout.POINT_COLUMNS.items():
         _check_spec(source, name, spec, (n_points, *spec.shape[1:]), "catalog")
     values = {name.rsplit("/", 1)[1]: source[name][...] for name in layout.POINT_COLUMNS}
@@ -399,7 +401,7 @@ class ScanFileSummary:
     n_points, n_pending, n_writing, n_complete, n_failed, n_interrupted, n_unattempted : int
         Point counts by status.
     complete : bool
-        ``True`` when every point is complete. A valid catalog can be
+        ``True`` when at least one point exists and every point is complete. A valid catalog can be
         incomplete.
     lauelab_version : str
         Package version that wrote the catalog.
@@ -417,7 +419,7 @@ class ScanFileSummary:
 
     @property
     def complete(self) -> bool:
-        return self.n_complete == self.n_points
+        return self.n_points > 0 and self.n_complete == self.n_points
 
 
 def validate_scan_file(path) -> ScanFileSummary:
