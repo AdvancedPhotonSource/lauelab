@@ -14,6 +14,7 @@ geometry
 crystals
 analysis
 simulation
+strain
 energy
 visualization
 reconstruction

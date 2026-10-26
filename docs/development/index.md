@@ -122,7 +122,7 @@ The workflow does not publish or keep build artifacts.
 
 Indexing results, Q-distribution profiles, reconstructed point files and scan catalogs use shared conventions for root attributes, versioning, units and ragged data. See [HDF5 file conventions](hdf5-conventions.md).
 
-See [Q-distribution HDF5 format](energy-format.md) for profile arrays, settings and provenance. [Reconstruction scan format](reconstruction-scan-format.md) specifies the scan catalog and point-file layouts and stored values. [Reconstruction scan protocol](reconstruction-scan-protocol.md) describes preparation, coordination, statuses and readers. [Inspect a reconstructed point](../guides/depth-inspection.md) defines ROIs.
+See [Q-distribution HDF5 format](energy-format.md) for profile arrays, settings and provenance. [Reconstruction scan format](reconstruction-scan-format.md) specifies the scan catalog and point-file layouts and stored values. [Reconstruction scan protocol](reconstruction-scan-protocol.md) describes preparation, coordination, statuses and readers. [Inspect a reconstructed point](../guides/depth-inspection.md) defines ROIs. [Strain-result format](strain-format.md) defines the standalone strain files; [strain validation](strain-validation.md) distinguishes controlled tests from empirical Igor comparisons.
 
 ```{toctree}
 :hidden:
@@ -132,4 +132,6 @@ hdf5-conventions
 reconstruction-scan-format
 reconstruction-scan-protocol
 energy-format
+strain-format
+strain-validation
 ```

@@ -139,7 +139,18 @@ def _selected_assignment_rows(dataset, scope):
     return rows, selected_pattern_rows, dataset.pattern_frame_indices[selected_pattern_rows]
 
 
-def _peak_rows(dataset, frame_indices, peak_indices):
+def _peak_lookup(dataset):
+    """Build the shared frame/peak association index once for repeated joins."""
+    stride = int(dataset.peak_indices.max(initial=0)) + 1
+    keys = dataset.peak_frame_indices.astype(np.int64) * stride + dataset.peak_indices
+    order = np.argsort(keys, kind="stable")
+    sorted_keys = keys[order]
+    if np.any(sorted_keys[1:] == sorted_keys[:-1]):
+        raise ValueError("dataset repeats a measured frame/peak identity")
+    return stride, order, sorted_keys
+
+
+def _peak_rows(dataset, frame_indices, peak_indices, *, lookup=None):
     """Return rows of ``dataset.peaks`` for ``(frame, peak index)`` pairs.
 
     Rows are found with one sort of a composite key instead of a dictionary
@@ -151,13 +162,13 @@ def _peak_rows(dataset, frame_indices, peak_indices):
         if len(frame_indices):
             raise KeyError("assignment refers to a peak that is not in the dataset")
         return np.empty(0, dtype=int)
-    stride = int(max(dataset.peak_indices.max(), peak_indices.max(initial=0))) + 1
-    keys = dataset.peak_frame_indices.astype(np.int64) * stride + dataset.peak_indices
-    order = np.argsort(keys, kind="stable")
+    stride, order, sorted_keys = _peak_lookup(dataset) if lookup is None else lookup
+    if np.any(peak_indices < 0) or np.any(peak_indices >= stride):
+        raise KeyError("assignment refers to a peak that is not in the dataset")
     wanted = frame_indices * stride + peak_indices
-    positions = np.searchsorted(keys[order], wanted)
+    positions = np.searchsorted(sorted_keys, wanted)
     positions = np.minimum(positions, len(order) - 1)
-    if np.any(keys[order[positions]] != wanted):
+    if np.any(sorted_keys[positions] != wanted):
         raise KeyError("assignment refers to a peak that is not in the dataset")
     return order[positions]
 

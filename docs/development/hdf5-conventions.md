@@ -2,6 +2,8 @@
 
 Indexing results, [Q-distribution profiles](energy-format.md), and [reconstruction catalogs and point files](reconstruction-scan-format.md) use these HDF5 conventions, with the exception for point files described under Units. Detector frames and per-depth reconstruction outputs have the 34-ID-E `entry1` layout, which `lauelab` reads and writes but does not define.
 
+[Standalone strain results](strain-format.md) share the root, version, unit and publication conventions. Their format documents per-fit groups and JSON context for independent fits rather than an appendable flat catalogue.
+
 ## Root attributes
 
 | Attribute | Type | Meaning |

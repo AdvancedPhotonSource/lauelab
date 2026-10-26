@@ -1,6 +1,6 @@
 # lauelab
 
-Python and native tools for Laue diffraction analysis at APS beamline 34-ID-E. The package supports indexing, wire-scan reconstruction, simulation, orientation analysis, and interactive visualization.
+Python and native tools for Laue diffraction analysis at APS beamline 34-ID-E. The package supports indexing, wire-scan reconstruction, simulation, orientation analysis, deviatoric lattice strain, and interactive visualization.
 
 Built on [LaueGo](https://github.com/34IDE/LaueGo), developed by Jon Z. Tischler and collaborators. See [acknowledgments and citations](docs/acknowledgments.md).
 
@@ -38,6 +38,7 @@ print(result.n_peaks, result.n_indexed, result.n_patterns)
 ```
 
 Use `Indexer` to reuse one geometry and crystal configuration across frames. The subprocess-based `lauego()` function remains available for existing LaueGo workflows.
+
 
 ## Test
 

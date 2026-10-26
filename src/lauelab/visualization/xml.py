@@ -50,8 +50,17 @@ def _integer(value, *, path, step, field):
     return int(value)
 
 
-def _integer_array(parent, name, *, path, step, field):
-    values = _array(parent, (name,))
+def _integer_array(parent, name, *, path, step, field, strict=False):
+    if strict:
+        # fromstring can accept a numeric prefix such as "1garbage". A fit
+        # must validate every association token before display normalization.
+        text = _text(parent, name)
+        try:
+            values = np.asarray(text.split() if text else (), dtype=float)
+        except ValueError as error:
+            raise ValueError(f"invalid integer in {path}, step {step}, field {field}") from error
+    else:
+        values = _array(parent, (name,))
     if not np.isfinite(values).all() or np.any(values != values.astype(int)):
         raise ValueError(f"invalid integer in {path}, step {step}, field {field}")
     return values.astype(int)
@@ -148,6 +157,15 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
     Geometry is optional. An explicit geometry object or path takes precedence;
     otherwise readable paths embedded in the XML are tried. Failure to resolve
     embedded geometry does not prevent loading non-detector visualizations.
+    """
+    return _load_visualization_xml(path, geometry=geometry, frame_ids=frame_ids)
+
+
+def _load_visualization_xml(path, *, geometry=None, frame_ids=None, pattern_errors=None):
+    """Shared reader; retain raw assignment errors for strict analysis adapters.
+
+    The public visualization reader remains permissive. Strain collects errors
+    before truncation so an invalid selected pattern cannot become a valid fit.
     """
     path = Path(path)
     root = ET.parse(path).getroot()
@@ -274,33 +292,45 @@ def load_visualization_xml(path, *, geometry=None, frame_ids=None):
             rms_errors.append(_attribute_number(pattern, "rms_error"))
 
             hkl_node = pattern.find("hkl_s")
-            h, k, l = (
-                _integer_array(
-                    hkl_node,
-                    name,
-                    path=path,
-                    step=frame_index,
-                    field=f"pattern[{rank}].hkl_s.{name}",
+            key = (ids[frame_index], pattern_indices[-1])
+            try:
+                h, k, l, peak_refs = (
+                    _integer_array(
+                        hkl_node, name, path=path, step=frame_index,
+                        field=f"pattern[{rank}].hkl_s.{name}",
+                        strict=pattern_errors is not None,
+                    ) for name in ("h", "k", "l", "PkIndex")
                 )
-                for name in ("h", "k", "l")
-            )
-            peak_refs = _integer_array(
-                hkl_node,
-                "PkIndex",
-                path=path,
-                step=frame_index,
-                field=f"pattern[{rank}].hkl_s.PkIndex",
-            )
+            except ValueError as error:
+                if pattern_errors is None:
+                    raise
+                pattern_errors[key] = str(error)
+                h, k, l, peak_refs = (np.empty(0, dtype=int) for _ in range(4))
+            if pattern_errors is not None:
+                lengths = [len(v) for v in (h, k, l, peak_refs)]
+                declared = _attribute_number(pattern, "Nindexed", lengths[0])
+                if len(set(lengths)) != 1 or declared != lengths[0]:
+                    pattern_errors[key] = "HKL/PkIndex lengths or Nindexed disagree"
+                elif (np.any(peak_refs < 0) or np.any(peak_refs >= peak_count)
+                      or len(np.unique(peak_refs)) != len(peak_refs)):
+                    pattern_errors[key] = "invalid or repeated measured peak association"
+                elif len(x) != peak_count or len(y) != peak_count:
+                    pattern_errors[key] = "measured centroid lengths disagree with Npeaks"
             errors = _array(hkl_node, ("err_deg",))
             assignment_energy = _array(hkl_node, ("energy_kev",))
             predicted_intensity = _array(hkl_node, ("pred_intens",))
             count = min(len(h), len(k), len(l), len(peak_refs))
-            pattern_counts.append(_integer(
-                _attribute_number(pattern, "Nindexed", count),
-                path=path,
-                step=frame_index,
-                field=f"pattern[{rank}].Nindexed",
-            ))
+            try:
+                declared_count = _integer(
+                    _attribute_number(pattern, "Nindexed", count),
+                    path=path, step=frame_index, field=f"pattern[{rank}].Nindexed",
+                )
+            except ValueError as error:
+                if pattern_errors is None:
+                    raise
+                pattern_errors[key] = str(error)
+                declared_count = count
+            pattern_counts.append(declared_count)
             if count:
                 valid = (peak_refs[:count] >= 0) & (peak_refs[:count] < peak_count)
                 count_valid = int(np.count_nonzero(valid))

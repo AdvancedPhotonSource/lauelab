@@ -10,6 +10,7 @@ crystals
 frame-input
 parameters
 stages
+strain
 results
 results-file
 batch-indexing

@@ -1,6 +1,6 @@
 # lauelab
 
-`lauelab` provides Python interfaces for processing Laue diffraction data at APS beamline 34-ID-E. It indexes crystal orientations, reconstructs wire scans into depth-resolved images, reduces monochromatic images to intensity-versus-Q profiles, predicts detector reflections, and prepares maps, pole figures, detector overlays, and tables. Visualization functions accept in-memory indexing results, results files, or LaueGo XML.
+`lauelab` provides Python interfaces for processing Laue diffraction data at APS beamline 34-ID-E. It indexes crystal orientations, refines deviatoric lattice strain, reconstructs wire scans into depth-resolved images, reduces monochromatic images to intensity-versus-Q profiles, predicts detector reflections, and prepares maps, pole figures, detector overlays, and tables. Visualization functions accept in-memory indexing results, results files, or LaueGo XML.
 
 Built on [LaueGo](https://github.com/34IDE/LaueGo), developed by Jon Z. Tischler and collaborators. See [acknowledgments and citations](acknowledgments.md).
 
@@ -32,6 +32,7 @@ Install the package from source, then follow one frame through indexing, visuali
 - [Plot monochromatic intensity versus Q](guides/energy.md)
 - [Prepare maps, figures, and tables](guides/visualization.md)
 - [Simulate reflections for an indexed orientation](guides/simulation.md)
+- [Refine deviatoric lattice strain](guides/strain.md)
 
 The in-process API accepts a two-dimensional detector frame, as a NumPy array in a supported dtype or a supported 34-ID-E HDF5 file. It returns a {class}`~lauelab.indexing.FrameResult` containing detected peaks, scattering vectors, candidate crystal patterns, timing, and provenance.
 

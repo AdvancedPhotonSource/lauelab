@@ -8,6 +8,7 @@ These pages describe calculations used by the in-process APIs. They focus on beh
 peak-search
 pixel-to-q
 crystal-indexing
+strain
 depth-reconstruction
 energy
 ```
