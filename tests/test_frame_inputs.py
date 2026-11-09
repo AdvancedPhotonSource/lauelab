@@ -12,7 +12,7 @@ import pytest
 from conftest import requires_liblaue
 
 from lauelab.indexing import (
-    Indexer, IndexParams, InputError, PeakParams, lauego, load_mask,
+    Indexer, IndexParams, InputError, PeakParams, lauego, load_mask, read_frame,
 )
 from lauelab.indexing.index import _find_executables
 from lauelab.indexing.indexer import SUPPORTED_FRAME_DTYPES
@@ -427,3 +427,20 @@ def test_fractional_whole_number_parameters_are_rejected_not_rounded(
 def test_zero_max_peaks_is_rejected_in_favor_of_none():
     with pytest.raises(InputError, match="positive.*None"):
         Indexer(GEOMETRY, peak_params=PeakParams(max_peaks=0))
+
+
+def test_read_frame_returns_pixels_metadata_and_roi():
+    image, metadata, processing = read_frame(TWO_GRAINS)
+    with h5py.File(TWO_GRAINS) as source:
+        expected = source["entry1/data/data"][...]
+        scan_number = source["entry1/scanNum"][()].flat[0]
+
+    assert np.array_equal(image, expected)
+    assert metadata["scan_number"] == scan_number
+    assert processing["start"] == (0, 0)
+    assert processing["group"] == (1, 1)
+
+
+def test_read_frame_reports_an_unreadable_frame_as_input_error(tmp_path):
+    with pytest.raises(InputError, match="cannot read HDF5 frame"):
+        read_frame(tmp_path / "missing.h5")

@@ -46,6 +46,9 @@ class ResultsWriter:
     transactional recovery; the file is not a valid results file and the run
     must be rewritten from the start. :func:`validate_results_file` detects
     such a file.
+
+    ``program`` names the code that produced the results; it is stored in the
+    ``program`` attribute of ``/run``. The default is the in-process indexer.
     """
 
     def __init__(
@@ -61,6 +64,7 @@ class ResultsWriter:
         cosmic_filter: bool,
         overwrite: bool = False,
         compression=None,
+        program: str = "liblaue",
     ):
         self.path = Path(path)
         self.crystal = crystal
@@ -71,6 +75,7 @@ class ResultsWriter:
         self.detector_id = detector_id
         self.cosmic_filter = cosmic_filter
         self.compression = compression
+        self.program = program
         self._mode = "w" if overwrite else "x"
         self._file = None
         self._count = 0
@@ -111,7 +116,7 @@ class ResultsWriter:
         write_crystal(target, self.crystal)
         self._write_geometry(target)
         run = target.create_group("run")
-        run.attrs["program"] = "liblaue"
+        run.attrs["program"] = self.program
         run.attrs["detector_index"] = self.detector_index
         run.attrs["detector_id"] = self.detector_id
         run.attrs["cosmic_filter"] = self.cosmic_filter

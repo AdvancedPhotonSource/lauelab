@@ -14,7 +14,7 @@ from .crystal import Atom, Cell, Crystal, load_crystal
 from .errors import (
     IndexingError, InputError, InvalidResultsFile, InvalidScanFile, LaueError, NumericalIndexingError, ReconstructionError, WorkerError,
 )
-from ._frame import ScanFrame, load_mask
+from ._frame import ScanFrame, load_mask, read_frame
 from .incremental import EXPECTED_INPUT_ERRORS, FrameInput, FrameOutcome, FrameOutcomes
 from .index import IndexingResult, lauego
 from .indexer import (
@@ -53,6 +53,7 @@ __all__ = [
     'FrameResult',
     'ResultsWriter',
     'load_mask',
+    'read_frame',
     'ScanFrame',
     'WorkerError',
     'FrameInput',

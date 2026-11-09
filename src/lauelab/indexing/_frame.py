@@ -10,6 +10,7 @@ import os
 
 import numpy as np
 
+from .errors import InputError
 
 from lauelab._frame import (
     detector_to_roi_pixels, load_mask, read_h5_frame, read_scan_frame,
@@ -54,3 +55,39 @@ class ScanFrame:
         if self.depth_index < 0:
             raise ValueError("depth_index must be nonnegative")
         object.__setattr__(self, "depth_index", int(self.depth_index))
+
+
+def read_frame(frame: str | os.PathLike[str] | ScanFrame):
+    """Read one stored frame without processing it.
+
+    Parameters
+    ----------
+    frame
+        Path to a 34-ID-E HDF5 frame, or a :class:`ScanFrame` selecting a
+        reconstructed depth image.
+
+    Returns
+    -------
+    tuple
+        ``(image, metadata, processing)``. ``image`` is the two-dimensional
+        pixel array indexed ``[y, x]``, in the type stored in the file.
+        ``metadata`` is a dict of the :class:`FrameMetadata` field names found
+        in the file. ``processing`` holds any of ``start`` and ``group``, each
+        an ``(x, y)`` pair giving the full-detector ROI origin and pixel
+        grouping, and ``depth`` in µm. A key is absent when the file does not
+        record it.
+
+    Raises
+    ------
+    InputError
+        If the file cannot be read or is not a supported frame.
+    """
+    if isinstance(frame, ScanFrame):
+        try:
+            return read_scan_frame(frame)
+        except (OSError, KeyError, ValueError, IndexError) as error:
+            raise InputError(f"cannot read {frame}: {error}") from error
+    try:
+        return read_h5_frame(frame)
+    except (OSError, KeyError, ValueError) as error:
+        raise InputError(f"cannot read HDF5 frame {frame}: {error}") from error

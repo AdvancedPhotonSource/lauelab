@@ -61,6 +61,8 @@ Use {meth}`Geometry.pixels_to_q <lauelab.indexing.Geometry.pixels_to_q>` for pix
 
 .. autofunction:: load_mask
 
+.. autofunction:: read_frame
+
 .. autoclass:: ScanFrame
    :members:
 

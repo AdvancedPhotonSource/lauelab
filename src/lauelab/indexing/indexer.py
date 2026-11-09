@@ -16,7 +16,7 @@ import numpy as np
 from ._liblaue import Geometry, NativeCrystal, ffi, get_library
 from .crystal import Crystal, load_crystal
 from .errors import IndexingError, InputError, NumericalIndexingError
-from ._frame import ScanFrame, read_h5_frame, read_scan_frame, roi_inclusive_end
+from ._frame import ScanFrame, read_frame, roi_inclusive_end
 from .lau_dataclasses.atom import Atom as StepAtom
 from .lau_dataclasses.hkls import HKLs
 from .lau_dataclasses.indexing import Indexing
@@ -1152,16 +1152,9 @@ class Indexer:
             if isinstance(frame, ScanFrame):
                 scan_frame = frame
                 input_image = frame.path
-                try:
-                    source, file_metadata, file_processing = read_scan_frame(frame)
-                except (OSError, KeyError, ValueError, IndexError) as error:
-                    raise InputError(f"cannot read {frame}: {error}") from error
             else:
                 input_image = str(frame)
-                try:
-                    source, file_metadata, file_processing = read_h5_frame(frame)
-                except (OSError, KeyError, ValueError) as error:
-                    raise InputError(f"cannot read HDF5 frame {frame}: {error}") from error
+            source, file_metadata, file_processing = read_frame(frame)
             supplied_metadata = {**file_metadata, **supplied_metadata}
             start = file_processing.get("start", start)
             group = file_processing.get("group", group)

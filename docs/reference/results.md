@@ -37,7 +37,7 @@ See [Results files](../guides/results-file.md) for writing, loading, and convert
 (results-file-layout)=
 ### File layout
 
-Format `lauelab-indexing-results`, version 1. Root attributes are `format`, `version`, `lauelab_version`, `created`, and, for a converted file, `source`. The `run` group has no datasets; its attributes are `program`, `detector_index`, `detector_id`, `cosmic_filter`, and one attribute per {class}`~lauelab.indexing.PeakParams` and {class}`~lauelab.indexing.IndexParams` field. The `crystal` group has `name`, `space_group`, `setting`, and `source` attributes and is absent when the run has no crystal. The `geometry` group has a `path` attribute.
+Format `lauelab-indexing-results`, version 1. Root attributes are `format`, `version`, `lauelab_version`, `created`, and, for a converted file, `source`. The `run` group has no datasets; its attributes are `program` (the code that produced the results, `liblaue` for the in-process indexer), `detector_index`, `detector_id`, `cosmic_filter`, and one attribute per {class}`~lauelab.indexing.PeakParams` and {class}`~lauelab.indexing.IndexParams` field. The `crystal` group has `name`, `space_group`, `setting`, and `source` attributes and is absent when the run has no crystal. The `geometry` group has a `path` attribute.
 
 A merged file has a `merged_sources` root attribute listing its input files in
 order. Its `created` and `lauelab_version` describe the merge, and it has no

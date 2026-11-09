@@ -131,6 +131,17 @@ def test_writer_records_layout_and_run_configuration(tmp_path):
 
 
 @requires_liblaue
+def test_results_writer_records_the_named_program(tmp_path):
+    indexer = Indexer(GEOMETRY, CRYSTAL)
+    output = tmp_path / "other.h5"
+    with indexer.results_writer(output, program="other-indexer"):
+        pass
+
+    with h5py.File(output) as source:
+        assert source["run"].attrs["program"] == "other-indexer"
+
+
+@requires_liblaue
 def test_load_results_rejects_unknown_version(tmp_path):
     indexer = Indexer(GEOMETRY, CRYSTAL)
     output = tmp_path / "results.h5"
