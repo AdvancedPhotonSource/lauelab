@@ -9,6 +9,7 @@ peak-search
 pixel-to-q
 crystal-indexing
 strain
+calibration
 depth-reconstruction
 energy
 ```

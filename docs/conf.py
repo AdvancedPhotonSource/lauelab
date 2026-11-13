@@ -38,6 +38,9 @@ llms_txt_summary = (
     "visualization, and wire-scan reconstruction."
 )
 
+# Render $...$ and $$...$$ in the Markdown pages as math.
+myst_enable_extensions = ["dollarmath"]
+
 source_suffix = {
     ".md": "markdown",
 }

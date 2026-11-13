@@ -33,6 +33,7 @@ Install the package from source, then follow one frame through indexing, visuali
 - [Prepare maps, figures, and tables](guides/visualization.md)
 - [Simulate reflections for an indexed orientation](guides/simulation.md)
 - [Refine deviatoric lattice strain](guides/strain.md)
+- [Calibrate a detector](guides/calibration.md)
 
 The in-process API accepts a two-dimensional detector frame, as a NumPy array in a supported dtype or a supported 34-ID-E HDF5 file. It returns a {class}`~lauelab.indexing.FrameResult` containing detected peaks, scattering vectors, candidate crystal patterns, timing, and provenance.
 

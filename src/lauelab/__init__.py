@@ -8,7 +8,7 @@ from types import ModuleType
 from ._publish import partial_path, publish_file
 
 __all__ = [
-    "analysis", "indexing", "is_results_file", "partial_path", "publish_file",
+    "analysis", "calibration", "indexing", "is_results_file", "partial_path", "publish_file",
     "reconstruct", "strain", "visualization",
 ]
 
@@ -36,7 +36,7 @@ def is_results_file(path) -> bool:
 
 
 def __getattr__(name: str) -> ModuleType:
-    if name not in {"analysis", "indexing", "reconstruct", "strain", "visualization"}:
+    if name not in {"analysis", "calibration", "indexing", "reconstruct", "strain", "visualization"}:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     module = import_module(f".{name}", __name__)
     globals()[name] = module
