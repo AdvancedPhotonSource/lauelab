@@ -6,8 +6,10 @@ Usage:
     python contributing/add_license_headers.py --check  # exit 1 if any missing
 
 Covers tracked *.py, *.c, *.h, and *.cu files. The vendored JZT snapshot
-(src/lauelab/analysis/_vendor/) is excluded: it is a read-only copy of
-third-party-maintained code, and its provenance is documented in its README.
+(src/lauelab/analysis/_vendor/) and the MINPACK folder
+(src/lauelab/indexing/src/minpack/) are excluded: they contain copies of
+third-party code that keep their own headers, and each README documents the
+provenance.
 Idempotent: files already containing the copyright line are left unchanged.
 """
 
@@ -23,7 +25,7 @@ LICENSE_URL = "Full license accessible at https://github.com/AdvancedPhotonSourc
 HEADER_HASH = f"# {COPYRIGHT}\n# {LICENSE_URL}\n".encode()
 HEADER_C = f"/* {COPYRIGHT}\n   {LICENSE_URL} */\n".encode()
 
-EXCLUDE_PREFIXES = ("src/lauelab/analysis/_vendor/",)
+EXCLUDE_PREFIXES = ("src/lauelab/analysis/_vendor/", "src/lauelab/indexing/src/minpack/")
 MARKER = b"UChicago Argonne"
 
 

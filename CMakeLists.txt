@@ -73,7 +73,7 @@ endif()
 # Dependencies (capabilities, not package managers)
 # ---------------------------------------------------------------------------
 # Prefer the dependency prefixes that the active toolchain exposes on PATH
-# (gsl-config, h5cc).  This is a hint only: it keeps a conda env, /usr/local,
+# (h5cc).  This is a hint only: it keeps a conda env, /usr/local,
 # or an HPC module tree ahead of a stray system copy without branching on
 # which package manager provided it.  CMAKE_PREFIX_PATH and *_ROOT still win.
 # The Python interpreter we are installing into (set by scikit-build-core)
@@ -90,20 +90,16 @@ foreach(pyvar IN ITEMS Python_EXECUTABLE Python3_EXECUTABLE PYTHON_EXECUTABLE)
   endif()
 endforeach()
 
-foreach(tool IN ITEMS gsl-config h5cc)
+foreach(tool IN ITEMS h5cc)
   find_program(LAUE_${tool}_PATH NAMES ${tool} HINTS ${LAUE_TOOL_HINTS})
   if(LAUE_${tool}_PATH)
     get_filename_component(_bindir "${LAUE_${tool}_PATH}" DIRECTORY)
     get_filename_component(_prefix "${_bindir}" DIRECTORY)
     list(APPEND CMAKE_PREFIX_PATH "${_prefix}")
-    if(tool STREQUAL "gsl-config" AND NOT DEFINED GSL_ROOT_DIR)
-      set(GSL_ROOT_DIR "${_prefix}")
-    endif()
   endif()
 endforeach()
 list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
 
-find_package(GSL REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS C)
 if(LAUE_BUILD_LAUEGO OR LAUE_BUILD_RECONSTRUCTION)
   find_package(HDF5 REQUIRED COMPONENTS C HL)
@@ -133,7 +129,17 @@ set(PEAKSEARCH_SRC ${LAUE_PKG}/indexing/src/peaksearch/src)
 set(PIXELS2QS_SRC  ${LAUE_PKG}/indexing/src/pixels2qs/src)
 set(EULER_SRC      ${LAUE_PKG}/indexing/src/euler/src)
 set(LIBLAUE_SRC    ${LAUE_PKG}/indexing/src/liblaue)
+set(MINPACK_SRC    ${LAUE_PKG}/indexing/src/minpack)
 set(RECON_CPU_SRC  ${LAUE_PKG}/reconstruct/source/recon_cpu/source)
+
+# Levenberg-Marquardt least squares for the peak fits (MINPACK, see minpack/README.md)
+set(MINPACK_SOURCES
+  ${MINPACK_SRC}/lmsder.c
+  ${MINPACK_SRC}/lmpar.c
+  ${MINPACK_SRC}/qrfac.c
+  ${MINPACK_SRC}/qrsolv.c
+  ${MINPACK_SRC}/enorm.c
+  ${MINPACK_SRC}/dpmpar.c)
 
 set(LAUE_INDEXING_BIN_DIR   lauelab/indexing/bin)
 set(LAUE_RECONSTRUCT_BIN_DIR lauelab/reconstruct/bin)
@@ -167,7 +173,9 @@ add_library(laue SHARED
   ${EULER_SRC}/EulerTestFaster.c
   ${EULER_SRC}/lattice.c
   ${EULER_SRC}/mathUtil.c
-  ${EULER_SRC}/optimize.c)
+  ${EULER_SRC}/nmsimplex.c
+  ${EULER_SRC}/optimize.c
+  ${MINPACK_SOURCES})
 set_target_properties(laue PROPERTIES
   OUTPUT_NAME laue
   PREFIX "lib"
@@ -177,15 +185,9 @@ set_target_properties(laue PROPERTIES
   VISIBILITY_INLINES_HIDDEN ON)
 target_compile_definitions(laue PRIVATE LIBLAUE_BUILD)
 target_compile_options(laue PRIVATE -ffunction-sections -fdata-sections)
-# __wrap_abort in liblaue.c enforces the static GSL error-handler invariant.
-target_link_options(laue PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,--wrap=abort)
-target_include_directories(laue PRIVATE ${LIBLAUE_SRC} ${PIXELS2QS_SRC} ${PEAKSEARCH_SRC} ${EULER_SRC})
-get_filename_component(LAUE_GSL_LIBRARY_DIR "${GSL_LIBRARY}" DIRECTORY)
-if(NOT EXISTS "${LAUE_GSL_LIBRARY_DIR}/libgsl.a")
-  message(FATAL_ERROR "static GSL required; see docs/development")
-endif()
-target_link_libraries(laue PRIVATE laue_common_flags OpenMP::OpenMP_C
-  "${LAUE_GSL_LIBRARY_DIR}/libgsl.a" "${LAUE_GSL_LIBRARY_DIR}/libgslcblas.a" m)
+target_link_options(laue PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL)
+target_include_directories(laue PRIVATE ${LIBLAUE_SRC} ${PIXELS2QS_SRC} ${PEAKSEARCH_SRC} ${EULER_SRC} ${MINPACK_SRC})
+target_link_libraries(laue PRIVATE laue_common_flags OpenMP::OpenMP_C m)
 if(LAUE_IPO_SUPPORTED)
   set_property(TARGET laue PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
 else()
@@ -213,9 +215,10 @@ if(LAUE_BUILD_LAUEGO)
     ${PEAKSEARCH_SRC}/microHDF5.c
     ${PEAKSEARCH_SRC}/peak.c
     ${PEAKSEARCH_SRC}/peaksearch.c
-    ${PEAKSEARCH_SRC}/point.c)
-  target_include_directories(peaksearch PRIVATE ${PEAKSEARCH_SRC})
-  target_link_libraries(peaksearch PRIVATE laue_common_flags hdf5::hdf5_hl hdf5::hdf5 GSL::gsl GSL::gslcblas ZLIB::ZLIB m)
+    ${PEAKSEARCH_SRC}/point.c
+    ${MINPACK_SOURCES})
+  target_include_directories(peaksearch PRIVATE ${PEAKSEARCH_SRC} ${MINPACK_SRC})
+  target_link_libraries(peaksearch PRIVATE laue_common_flags hdf5::hdf5_hl hdf5::hdf5 ZLIB::ZLIB m)
 
   add_executable(pix2qs
     ${PIXELS2QS_SRC}/checkFileType.c
@@ -234,9 +237,10 @@ if(LAUE_BUILD_LAUEGO)
     ${EULER_SRC}/lattice.c
     ${EULER_SRC}/main.c
     ${EULER_SRC}/mathUtil.c
+    ${EULER_SRC}/nmsimplex.c
     ${EULER_SRC}/optimize.c)
   target_include_directories(euler PRIVATE ${EULER_SRC})
-  target_link_libraries(euler PRIVATE laue_common_flags GSL::gsl GSL::gslcblas m)
+  target_link_libraries(euler PRIVATE laue_common_flags m)
 
   install(TARGETS peaksearch pix2qs euler RUNTIME DESTINATION ${LAUE_INDEXING_BIN_DIR})
 endif()
@@ -258,7 +262,7 @@ if(LAUE_BUILD_RECONSTRUCTION)
   target_compile_definitions(reconstructN_cpu PRIVATE RECONSTRUCT_BACKWARDS MULTI_IMAGE_FILE)
   target_include_directories(reconstructN_cpu PRIVATE ${RECON_CPU_SRC})
   target_link_libraries(reconstructN_cpu PRIVATE laue_common_flags OpenMP::OpenMP_C
-    hdf5::hdf5_hl hdf5::hdf5 GSL::gsl GSL::gslcblas ZLIB::ZLIB m)
+    hdf5::hdf5_hl hdf5::hdf5 ZLIB::ZLIB m)
   install(TARGETS reconstructN_cpu RUNTIME DESTINATION ${LAUE_RECONSTRUCT_BIN_DIR})
 endif()
 
@@ -303,7 +307,6 @@ message(STATUS "  LAUE_BUILD_LAUEGO     ${LAUE_BUILD_LAUEGO}")
 message(STATUS "  LAUE_BUILD_RECONSTRUCTION ${LAUE_BUILD_RECONSTRUCTION}")
 message(STATUS "  LAUE_NATIVE_OPTIMIZATION  ${LAUE_NATIVE_OPTIMIZATION}")
 message(STATUS "  install RPATH         ${CMAKE_INSTALL_RPATH}")
-message(STATUS "  GSL                   ${GSL_VERSION} (${GSL_INCLUDE_DIRS})")
 if(HDF5_FOUND)
   message(STATUS "  HDF5                  ${HDF5_VERSION} (${HDF5_C_INCLUDE_DIRS})")
 endif()

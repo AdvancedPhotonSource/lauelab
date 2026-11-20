@@ -9,6 +9,14 @@ Reflection simulation also uses Tischler's `pydiffract` code, incorporated
 through the Laue Portal. See the [simulator provenance](https://github.com/AdvancedPhotonSource/lauelab/blob/main/src/lauelab/analysis/_vendor/jzt/README.md)
 for source details.
 
+The peak fits use MINPACK's Levenberg-Marquardt routines (Argonne National
+Laboratory, 1980) from cminpack 1.3.11, the C translation by Manolis Lourakis
+and Frederic Devernay. See the [MINPACK provenance](https://github.com/AdvancedPhotonSource/lauelab/blob/main/src/lauelab/indexing/src/minpack/README.md)
+for the source archive and the MINPACK copyright notice.
+
+This product includes software developed by the University of Chicago, as
+Operator of Argonne National Laboratory.
+
 ## Citations
 
 When publishing results obtained with `lauelab`, identify the package version

@@ -97,8 +97,8 @@ ws_calibration calibration;
 ws_imaging_parameters imaging_parameters;
 ws_image_set image_set;
 ws_user_preferences user_preferences;
-gsl_matrix * intensity_map;
-gsl_matrix * intensity_norm;
+dmatrix * intensity_map;
+dmatrix * intensity_norm;
 vvector p_read_buffer[2];
 vvector p_write_buffer[2];
 int p_ibuff;
@@ -136,7 +136,7 @@ int verbosePixel=0;
 void testing_depth(void);
 void printPieceOfArrayInt(int ilo, int ihi, int jhlo, int jhi, int Nx, int Ny, unsigned short int buf[Nx][Ny],int itype);
 void printPieceOfArrayDouble(int ilo, int ihi, int jhlo, int jhi, int Nx, int Ny, double buf[Nx][Ny]);
-void printPieceOf_gsl_matrix(int ilo, int ihi, int jlo, int jhi, gsl_matrix *mat);
+void printPieceOf_dmatrix(int ilo, int ihi, int jlo, int jhi, dmatrix *mat);
 #endif
 
 
@@ -937,7 +937,7 @@ void depth_resolve(
 #endif
 			pixel_edge.j = 0.5 + (double)j;
 			front_edge = pixel_to_point_xyz(pixel_edge);					/* the front edge of this pixel */
-			if ( gsl_matrix_get(intensity_map, i, j)  < cutoff) continue;	/* not enough intensity, skip this pixel */
+			if ( dmatrix_get(intensity_map, i, j)  < cutoff) continue;	/* not enough intensity, skip this pixel */
 			for (idep=0;idep<pixel_values_thread[ith].alloc;idep++) pixel_values_thread[ith].v[idep]=0.;	/* clear the pixel vector along depth, set all to zero */
 			memset(pixel_depths, 0, n_depths * sizeof(double));
 			point_xyz rotated_back_edge = MatrixMultiply31(calibration.wire.rho,back_edge);
@@ -962,7 +962,7 @@ void depth_resolve(
 			 */
 			for (step=0; step < pixel_values_thread[ith].size; step++) {
 				/* pixel locations are real coordinates on detector, but image is stripe of image from middle of image - correct for this. */
-				pixel_values_thread[ith].v[step] = gsl_matrix_get(image_set.wire_scanned.v[step], i - imaging_parameters.current_selection_start, j);
+				pixel_values_thread[ith].v[step] = dmatrix_get(image_set.wire_scanned.v[step], i - imaging_parameters.current_selection_start, j);
 
 			}
 
@@ -1001,7 +1001,7 @@ void depth_resolve(
 			}
 			for (idep=0; idep<n_depths; idep++) {
 				if (pixel_depths[idep] != 0) {
-					* gsl_matrix_ptr(image_set.depth_resolved.v[idep], i - imaging_parameters.current_selection_start, j) += pixel_depths[idep];
+					* dmatrix_ptr(image_set.depth_resolved.v[idep], i - imaging_parameters.current_selection_start, j) += pixel_depths[idep];
 					depth_totals[idep] += pixel_depths[idep];
 				}
 			}
@@ -1328,20 +1328,20 @@ int numImages)						/* number of input images, needed for .wire_scanned and .wir
 	image_set.depth_intensity.alloc = image_set.depth_intensity.size = Ndepths;
 	for (i=0; i<Ndepths; i++) image_set.depth_intensity.v[i] = 0.;		/* init to all zeros */
 
-	/* allocate space for write-buffers as array of pointers to gsl_matrices */
-//	image_set.depth_resolved.v = calloc((size_t)Ndepths,sizeof(gsl_matrix *));	/* allocate space for array of pointers to gsl_matricies (these are image) in the vector */
-	p_write_buffer[0].v = calloc((size_t)Ndepths,sizeof(gsl_matrix *));
-	p_write_buffer[1].v = calloc((size_t)Ndepths,sizeof(gsl_matrix *));
+	/* allocate space for write-buffers as array of pointers to dmatrices */
+//	image_set.depth_resolved.v = calloc((size_t)Ndepths,sizeof(dmatrix *));	/* allocate space for array of pointers to dmatrices (these are image) in the vector */
+	p_write_buffer[0].v = calloc((size_t)Ndepths,sizeof(dmatrix *));
+	p_write_buffer[1].v = calloc((size_t)Ndepths,sizeof(dmatrix *));
 //	if (!(image_set.depth_resolved.v)) { fprintf(stderr,"\ncannot allocate space for image_set.depth_resolved, %ld points\n",Ndepths); exit(1); }
 	if (!(p_write_buffer[0].v) || !(p_write_buffer[1].v)) { fprintf(stderr,"\ncannot allocate space for image_set.depth_resolved, %ld points\n",Ndepths); exit(1); }
 //	image_set.depth_resolved.alloc = image_set.depth_resolved.size = Ndepths;
 	p_write_buffer[0].alloc = p_write_buffer[1].alloc = Ndepths;
 	p_write_buffer[0].size = p_write_buffer[1].size = Ndepths;
 	for (i=0; i<Ndepths; i++) {
-		/* pointers to gsl_matrix containing space for the image, initialized to zero */
-//		image_set.depth_resolved.v[i] = gsl_matrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));	/* pointers to gsl_matrix containing space for the image, initialized to zero */
-		p_write_buffer[0].v[i] = gsl_matrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
-		p_write_buffer[1].v[i] = gsl_matrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
+		/* pointers to dmatrix containing space for the image, initialized to zero */
+//		image_set.depth_resolved.v[i] = dmatrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));	/* pointers to dmatrix containing space for the image, initialized to zero */
+		p_write_buffer[0].v[i] = dmatrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
+		p_write_buffer[1].v[i] = dmatrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
 	}
 
 #pragma message "Using a default value of 0 for wire X position"
@@ -1365,10 +1365,10 @@ int numImages)						/* number of input images, needed for .wire_scanned and .wir
 		/* #pragma message "the wire position is corrected here when it is read in for: PM500, origin, rotation (by rho)" */
 	}
 
-	/* allocate space for read-buffers as array of pointers to gsl_matricies */
-//	image_set.wire_scanned.v = calloc((size_t)numImages,sizeof(gsl_matrix *));	/* allocate space for array of pointers to gsl_matricies these are pieces of the input images */
-	p_read_buffer[0].v = calloc((size_t)numImages,sizeof(gsl_matrix *));
-	p_read_buffer[1].v = calloc((size_t)numImages,sizeof(gsl_matrix *));
+	/* allocate space for read-buffers as array of pointers to dmatrices */
+//	image_set.wire_scanned.v = calloc((size_t)numImages,sizeof(dmatrix *));	/* allocate space for array of pointers to dmatrices these are pieces of the input images */
+	p_read_buffer[0].v = calloc((size_t)numImages,sizeof(dmatrix *));
+	p_read_buffer[1].v = calloc((size_t)numImages,sizeof(dmatrix *));
 //	if (!(image_set.wire_scanned.v)) { fprintf(stderr,"\ncannot allocate space for image_set.wire_scanned, %d points\n",numImages); exit(1); }
 	if (!(p_read_buffer[0].v) || !(p_read_buffer[1].v)) { fprintf(stderr,"\ncannot allocate space for p_read_buffer, %d points\n",numImages); exit(1); }
 //	image_set.wire_scanned.alloc = numImages;							/* room allocated */
@@ -1376,15 +1376,15 @@ int numImages)						/* number of input images, needed for .wire_scanned and .wir
 //	image_set.wire_scanned.size = 0;									/* but nothing set */
 	p_read_buffer[0].size = p_read_buffer[1].size = 0;
 	for (i=0; i<numImages; i++) {
-		/* pointers to gsl_matrix containing space for the image */
-//		image_set.wire_scanned.v[i] = gsl_matrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));	/* pointers to gsl_matrix containing space for the image */
-		p_read_buffer[0].v[i] = gsl_matrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
-		p_read_buffer[1].v[i] = gsl_matrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
+		/* pointers to dmatrix containing space for the image */
+//		image_set.wire_scanned.v[i] = dmatrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));	/* pointers to dmatrix containing space for the image */
+		p_read_buffer[0].v[i] = dmatrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
+		p_read_buffer[1].v[i] = dmatrix_calloc((size_t)(imaging_parameters.rows_at_one_time), (size_t)(imaging_parameters.nROI_j));
 	}
 //	image_set.wire_scanned = p_read_buffer[0]; // now image_set.wire_scanned is the same as p_read_buffer[0], this may not be necessary here
 }
 /*	for (i = (long)(user_preferences.depth_start / user_preferences.depth_resolution); i <= (long)(user_preferences.depth_end / user_preferences.depth_resolution); i ++ ) {
- *		image = gsl_matrix_calloc(imaging_parameters.nROI_i, imaging_parameters.rows_at_one_time);
+ *		image = dmatrix_calloc(imaging_parameters.nROI_i, imaging_parameters.rows_at_one_time);
  *		image_set.depth_resolved.push_back(image);
  *		image_set.depth_intensity.push_back(0);
  *	}
@@ -1398,25 +1398,25 @@ void clear_depth_images(
 	vvector *is) //	ws_image_set *is)
 {
 	size_t i;
-//	for (i=0; i < is->depth_resolved.alloc; i++) gsl_matrix_set_zero(is->depth_resolved.v[i]);
-//	for (i=0; i < is->wire_scanned.alloc; i++) gsl_matrix_set_zero(is->wire_scanned.v[i]);
-	for (i=0; i < is->alloc; i++) gsl_matrix_set_zero(is->v[i]);
+//	for (i=0; i < is->depth_resolved.alloc; i++) dmatrix_set_zero(is->depth_resolved.v[i]);
+//	for (i=0; i < is->wire_scanned.alloc; i++) dmatrix_set_zero(is->wire_scanned.v[i]);
+	for (i=0; i < is->alloc; i++) dmatrix_set_zero(is->v[i]);
 }
 
 /* delete the images stored in image_set, and deallocate everything too, do: .wire_scanned, .depth_resolved, and .wire_positions, but NOT .depth_intensity */
 // Change: also deallocates the read/write buffers
 void delete_images(void)
 {
-	gsl_matrix * image;
+	dmatrix * image;
 
 	/* de-allocate and zero out read-buffers*/
 //	while (image_set.wire_scanned.alloc) {
 	while (p_read_buffer[0].alloc) {
 		//image = image_set.wire_scanned.v[--(image_set.wire_scanned.alloc)];
 		image = p_read_buffer[0].v[--(p_read_buffer[0].alloc)];
-		if (image != 0) gsl_matrix_free(image);
+		if (image != 0) dmatrix_free(image);
 		image = p_read_buffer[1].v[--(p_read_buffer[1].alloc)];
-		if (image != 0) gsl_matrix_free(image);
+		if (image != 0) dmatrix_free(image);
 	}
 	//CHECK_FREE(image_set.wire_scanned.v)
 	CHECK_FREE(p_read_buffer[0].v);
@@ -1430,9 +1430,9 @@ void delete_images(void)
 	while (p_write_buffer[0].alloc) {
 		//image = image_set.depth_resolved.v[--(image_set.depth_resolved.alloc)];
 		image = p_write_buffer[0].v[--(p_write_buffer[0].alloc)];
-		if (image != 0) gsl_matrix_free(image);
+		if (image != 0) dmatrix_free(image);
 		image = p_write_buffer[1].v[--(p_write_buffer[1].alloc)];
-		if (image != 0) gsl_matrix_free(image);
+		if (image != 0) dmatrix_free(image);
 	}
 	//CHECK_FREE(image_set.depth_resolved.v)
 	CHECK_FREE(p_write_buffer[0].v);
@@ -1448,12 +1448,12 @@ void delete_images(void)
 /*
  *	void delete_images()
  *	{
- *		gsl_matrix * image;
+ *		dmatrix * image;
  *
  *		while (image_set.wire_scanned.size())
  *		{
  *			image = image_set.wire_scanned.back();
- *			if (image != 0) gsl_matrix_free ( image );
+ *			if (image != 0) dmatrix_free ( image );
  *			image_set.wire_scanned.pop_back();
  *		}
  *		//image_set.wire_scanned.clear();
@@ -1467,9 +1467,9 @@ void get_difference_images(void)
 	size_t m;
 	for (m=0; m < (image_set.wire_scanned.size)-1; m++) {
 		#ifdef DEBUG_1_PIXEL
-		if (verbosePixel) printf("pixel[%d,%d] raw image[% 3d] = %g\n",pixelTESTi,pixelTESTj,(int)m,gsl_matrix_get(image_set.wire_scanned.v[m], pixelTESTi -  imaging_parameters.current_selection_start, pixelTESTj));
+		if (verbosePixel) printf("pixel[%d,%d] raw image[% 3d] = %g\n",pixelTESTi,pixelTESTj,(int)m,dmatrix_get(image_set.wire_scanned.v[m], pixelTESTi -  imaging_parameters.current_selection_start, pixelTESTj));
 		#endif
-		gsl_matrix_sub(image_set.wire_scanned.v[m], image_set.wire_scanned.v[m+1]);	/* gsl_matrix_sub(a,b) -->  a -= b */
+		dmatrix_sub(image_set.wire_scanned.v[m], image_set.wire_scanned.v[m+1]);	/* dmatrix_sub(a,b) -->  a -= b */
 	}
 }
 
@@ -1570,7 +1570,7 @@ int		file_num_start)				/* index of image file */
 	size_t	dimj = imaging_parameters.nROI_j;
 	char	filename[FILENAME_MAX];		/* full filename */
 
-	intensity_map = gsl_matrix_calloc(dimi, dimj);	/* get memory for one whole image */
+	intensity_map = dmatrix_calloc(dimi, dimj);	/* get memory for one whole image */
 
 #ifdef MULTI_IMAGE_FILE
 	strncpy(filename,infile,FILENAME_MAX-1);
@@ -1591,7 +1591,7 @@ int		file_num_start)				/* index of image file */
 printf(" ***in get_intensity_map()...\n");
 printf("pixelTESTi=%d, pixelTESTj=%d    intensity_map->data[%u*%lu+%u] = %lg\n",pixelTESTi,pixelTESTj,pixelTESTi,intensity_map->tda,pixelTESTj,intensity_map->data[pixelTESTi*intensity_map->tda+pixelTESTj]);
 printf("pixelTESTi=%d, pixelTESTj+1=%d    intensity_map->data[%u*%lu+%u] = %lg\n",pixelTESTi,pixelTESTj+1,pixelTESTi,intensity_map->tda,pixelTESTj+1,intensity_map->data[pixelTESTi*intensity_map->tda+pixelTESTj+1]);
-printPieceOf_gsl_matrix(pixelTESTi-2, pixelTESTi+2, pixelTESTj-2, pixelTESTj+2, intensity_map);
+printPieceOf_dmatrix(pixelTESTi-2, pixelTESTi+2, pixelTESTj-2, pixelTESTj+2, intensity_map);
 printf(" ***done with get_intensity_map()\n");
 #endif
 
@@ -1665,13 +1665,13 @@ double *intensity_sorted)		/* all the intensities, sorted  */
 	}
 	double	raw, scaled;
 	double	baseValue=pow(norm_threshold,-norm_exponent);	/* values for pixels < norm_threshold, you multiply by baseValue, not divide */
-	intensity_norm = gsl_matrix_calloc(dimi, dimj);			/* allocate memory for normalization image */
+	intensity_norm = dmatrix_calloc(dimi, dimj);			/* allocate memory for normalization image */
 	for (j=0;j<dimj;j++) {
 		for (i=0;i<dimi;i++) {
-			raw = gsl_matrix_get(intensity_map, i, j);
+			raw = dmatrix_get(intensity_map, i, j);
 			if (raw < norm_threshold) scaled = baseValue;	/* pixel raw < norm_threshold, use base value */
 			else scaled = pow(raw,-norm_exponent);			/* multiply by this scaled value, not divide */
-			gsl_matrix_set(intensity_norm, i, j, scaled);	/* set the normalization value */
+			dmatrix_set(intensity_norm, i, j, scaled);	/* set the normalization value */
 		}
 	}
 	if (verbose > 0) printf("\nMade normalization image using threshold=%g, exponent=%g\n",norm_threshold,norm_exponent);
@@ -1726,33 +1726,33 @@ Dvector *normalVector)				/* normalization vector made using 'normalization' */
 
 	if (normalVector->N >= (size_t)Nimages) {
 		if (verbose > 2) printf("\n\tnormalize input images by ion chamber or beam current");
-		for (f=0; f<Nimages; f++) gsl_matrix_scale(p_read_buffer[p_ibuff].v[f],normalVector->v[f]);
-		/* gsl_matrix_scale(a, x):  a(i,j) <--  x * a(i,j) is stored in a. */
+		for (f=0; f<Nimages; f++) dmatrix_scale(p_read_buffer[p_ibuff].v[f],normalVector->v[f]);
+		/* dmatrix_scale(a, x):  a(i,j) <--  x * a(i,j) is stored in a. */
 	}
 
 	if (norm_exponent>0) {
 		if (verbose > 2) printf("\n\tnormalize input images by (image1)^%g, with norm_threshold = %g  and  norm_rescale = %g",norm_exponent,norm_threshold,norm_rescale);
-		/* first make a new gsl matrix from intensity_norm that covers this ROI */
-		//gsl_matrix *image = image_set.wire_scanned.v[0];
-		gsl_matrix *image = p_read_buffer[p_ibuff].v[0];
-		gsl_matrix *roi_scaling;
-		roi_scaling = gsl_matrix_calloc(image->size1, image->size2);		/* allocate normalization roi, must match size of image_set images (NOT dimi,dimj)  */
+		/* first make a new matrix from intensity_norm that covers this ROI */
+		//dmatrix *image = image_set.wire_scanned.v[0];
+		dmatrix *image = p_read_buffer[p_ibuff].v[0];
+		dmatrix *roi_scaling;
+		roi_scaling = dmatrix_calloc(image->size1, image->size2);		/* allocate normalization roi, must match size of image_set images (NOT dimi,dimj)  */
 		double	value;
 		size_t	i,j;
 		for (j = 0; j < dimj; j++) {
 			for (i = 0; i < dimi; i++) {
-				value = gsl_matrix_get(intensity_norm, i+ilow, j+jlow);
-				gsl_matrix_set(roi_scaling, i, j, value);					/* set roi_scaling to intensity_norm values */
+				value = dmatrix_get(intensity_norm, i+ilow, j+jlow);
+				dmatrix_set(roi_scaling, i, j, value);					/* set roi_scaling to intensity_norm values */
 			}
 		}
 
 		/* apply roi_scaling, multiply each of the new roi's in image_set by roi_scaling, element by element */
 		for (f=0; f<Nimages; f++) {
-			//gsl_matrix_mul_elements (image_set.wire_scanned.v[f], roi_scaling);
-			gsl_matrix_mul_elements (p_read_buffer[p_ibuff].v[f], roi_scaling);
-			/* gsl_matrix_mul_elements(a,b):  a(i,j) <-- a(i,j) * b(i,j) is stored in a, b remains unchanged */
+			//dmatrix_mul_elements (image_set.wire_scanned.v[f], roi_scaling);
+			dmatrix_mul_elements (p_read_buffer[p_ibuff].v[f], roi_scaling);
+			/* dmatrix_mul_elements(a,b):  a(i,j) <-- a(i,j) * b(i,j) is stored in a, b remains unchanged */
 		}
-		gsl_matrix_free(roi_scaling);					/* done with roi, free it */
+		dmatrix_free(roi_scaling);					/* done with roi, free it */
 	}
 
 	if (verbose > 2) printf("\nimages ready for depth resolving\n");
@@ -1772,14 +1772,14 @@ int		jhi)
 	int		i,j;
 
 	/* matrix to store image */
-	gsl_matrix *image;
+	dmatrix *image;
 	int dimi = ihi - ilow + 1;
 	int dimj = jhi - jlow + 1;				/* for best performance jlow-jhi+1 == ydim */
 	double *buf = NULL;
 
 	/* set image_set.wire_scanned.size to be big enough (probably just increment .size by 1) */
-	//if ( (unsigned int)imageIndex >= image_set.wire_scanned.alloc) {/* do not have enough gsl_matrix arrays allocated */
-	if ( (unsigned int)imageIndex >= p_read_buffer[p_ibuff].alloc) {/* do not have enough gsl_matrix arrays allocated */
+	//if ( (unsigned int)imageIndex >= image_set.wire_scanned.alloc) {/* do not have enough dmatrix arrays allocated */
+	if ( (unsigned int)imageIndex >= p_read_buffer[p_ibuff].alloc) {/* do not have enough dmatrix arrays allocated */
 		//fprintf(stderr,"\nERROR -- readSingleImage(), need room for image #%d, but only have .alloc = %ld",imageIndex,image_set.wire_scanned.alloc);
 		fprintf(stderr,"\nERROR -- readSingleImage(), need room for image #%d, but only have .alloc = %ld",imageIndex,p_read_buffer[p_ibuff].alloc);
 		exit(2);
@@ -1799,11 +1799,11 @@ int		jhi)
 		exit(1);
 	}
 
-	/* transfer into a gsl_matrix, cannot do memcpy because last stripe is narrower & so there could be a mismatch */
+	/* transfer into a dmatrix, cannot do memcpy because last stripe is narrower & so there could be a mismatch */
  	int tda = image->tda;
 	for (i = 0; i < dimi; i++) {
 		for (j = 0; j < dimj; j++) {
-			//gsl_matrix_set(image, (size_t)i, (size_t)j, buf[i*dimj + j]);
+			//dmatrix_set(image, (size_t)i, (size_t)j, buf[i*dimj + j]);
 			image->data[i * tda + j] = buf[i*dimj + j];
 		}
 	}
@@ -1812,8 +1812,8 @@ int		jhi)
 if (verbosePixel && ilow<=pixelTESTi && pixelTESTi<=ihi) {
 	printf("\n ++++++++++ in readSingleImage(), finished reading i=[%d, %d], j=[%d, %d]",ilow,ihi,jlow,jhi);
 	printf("\n ++++++++++ pixel[%d,%d] = %g,     ROI: i=[%d,%d], j=[%d, %d],  Nj=%d",pixelTESTi,pixelTESTj, buf[dimj*(pixelTESTi-ilow) + pixelTESTj],ilow,ihi,jlow,jhi,dimj);
-	printf("\n ++++++++++ gsl pixel[%d-%d,%d] = %g",pixelTESTi,ilow,pixelTESTj,gsl_matrix_get(image, pixelTESTi-ilow, pixelTESTj));
-	printf("\n            gsl_matrix.size1 = %lu,  gsl_matrix.size2 = %lu,  gsl_matrix.tda = %lu",image->size1,image->size2,image->tda);
+	printf("\n ++++++++++ matrix pixel[%d-%d,%d] = %g",pixelTESTi,ilow,pixelTESTj,dmatrix_get(image, pixelTESTi-ilow, pixelTESTj));
+	printf("\n            dmatrix.size1 = %lu,  dmatrix.size2 = %lu,  dmatrix.tda = %lu",image->size1,image->size2,image->tda);
 	fflush(stdout);
 }
 #endif
@@ -2045,25 +2045,25 @@ size_t	end_i,
 char	*fileName)					/* fully qualified name of file */
 {
 	int		output_pixel_type, pixel_size;
-	//gsl_matrix *gslMatrix = image_set.depth_resolved.v[file_num];		/* pointer to the gsl_matrix with data to write */
-	gsl_matrix *gslMatrix = p_write_buffer[p_ibuff].v[file_num];		/* pointer to the gsl_matrix with data to write */
+	//dmatrix *outMatrix = image_set.depth_resolved.v[file_num];		/* pointer to the dmatrix with data to write */
+	dmatrix *outMatrix = p_write_buffer[p_ibuff].v[file_num];		/* pointer to the dmatrix with data to write */
 	hid_t file_id;
 	herr_t err;
 
-	if (gslMatrix->size2 != gslMatrix->tda) {							/* I will be assuming that this is true, so check here */
-		error("write_depth_datai(), gslMatrix.size1 != gslMatrix.tda");	/* this is needed so I can just write the gslMatrix->data directly */
+	if (outMatrix->size2 != outMatrix->tda) {							/* I will be assuming that this is true, so check here */
+		error("write_depth_datai(), outMatrix.size1 != outMatrix.tda");	/* this is needed so I can just write the outMatrix->data directly */
 		exit(1);
 	}
 
 #ifdef DEBUG_1_PIXEL
 	if (start_i<=pixelTESTi && pixelTESTi<=end_i)
 		printf("\t%%%%\t about to write stripe[%lu, %lu] of output image % 3d, pixel[%d,%d] = %g\t\tmax pixel = %g\n", \
-			start_i,end_i,file_num,pixelTESTi,pixelTESTj,gsl_matrix_get(gslMatrix, pixelTESTi -  start_i, pixelTESTj),gsl_matrix_max(gslMatrix));
+			start_i,end_i,file_num,pixelTESTi,pixelTESTj,dmatrix_get(outMatrix, pixelTESTi -  start_i, pixelTESTj),dmatrix_max(outMatrix));
 #endif
 
 	output_pixel_type = (user_preferences.out_pixel_type < 0) ? imaging_parameters.in_pixel_type : user_preferences.out_pixel_type;
 	pixel_size = (user_preferences.out_pixel_type < 0) ? imaging_parameters.in_pixel_bytes : WinView_itype2len(user_preferences.out_pixel_type);
-	if (gsl_matrix_max(gslMatrix)==0 && gsl_matrix_min(gslMatrix)==0) return;	/* do not write if this is all zeros (file is preset to zero) */
+	if (dmatrix_max(outMatrix)==0 && dmatrix_min(outMatrix)==0) return;	/* do not write if this is all zeros (file is preset to zero) */
 
 	/*	WinViewWriteROI(readfile, (char*)cbuf, output_pixel_type, imaging_parameters.nROI_i, 0, imaging_parameters.nROI_i - 1, start_i, end_i); */
 	struct HDF5_Header header;
@@ -2073,12 +2073,12 @@ char	*fileName)					/* fully qualified name of file */
 	header.itype = output_pixel_type;
 
 	if (norm_rescale > 1.0) {							/* rescale the output to fill the integer range */
-		gsl_matrix_scale(gslMatrix, norm_rescale);		/* multiply all elements of gslMatrix by norm_rescale */
-		/* gsl_matrix_scale(a, x):  a(i,j) <--  x * a(i,j) is stored in a. */
+		dmatrix_scale(outMatrix, norm_rescale);		/* multiply all elements of outMatrix by norm_rescale */
+		/* dmatrix_scale(a, x):  a(i,j) <--  x * a(i,j) is stored in a. */
 	}
 	
 	if ((file_id=H5Fopen(fileName,H5F_ACC_RDWR,H5P_DEFAULT))<=0) { fprintf(stderr,"ERROR -- H5Fopen(), cannot open the file '%s'\n",fileName); exit(1); }
-	err = HDF5WriteROI(file_id,"entry1/data/data",(void*)(gslMatrix->data), start_i, end_i, 0, (size_t)(imaging_parameters.nROI_j - 1), H5T_IEEE_F64LE, &header);
+	err = HDF5WriteROI(file_id,"entry1/data/data",(void*)(outMatrix->data), start_i, end_i, 0, (size_t)(imaging_parameters.nROI_j - 1), H5T_IEEE_F64LE, &header);
 	if (err) { fprintf(stderr,"ERROR -- HDF5WriteROI(), cannot write ROI to the file '%s'\n",fileName); exit(1); }
 	if ((err = H5Fclose(file_id))) { fprintf(stderr,"ERROR -- write_depth_datai(), file close error = %d\n",err); exit(1); }
 }
@@ -2218,19 +2218,19 @@ point_xyz wire_pos)								/* PM500 {x,y,z} values */
 
 
 #ifdef DEBUG_ALL
-void printPieceOf_gsl_matrix(				/* print some of the gsl_matrix */
+void printPieceOf_dmatrix(				/* print some of the dmatrix */
 int		ilo,								/* i range to print is [ihi, ilo] */
 int		ihi,
 int		jlo,								/* j range to print is [jhi, jlo] */
 int		jhi,
-gsl_matrix *mat)
+dmatrix *mat)
 {
 	int		i,j;
-	printf("\nfor gsl_matrix_get(mat,i,j)  (j is the fast index)\nj\t i=");
+	printf("\nfor dmatrix_get(mat,i,j)  (j is the fast index)\nj\t i=");
 	for (i=ilo;i<=ihi;i++) printf("\t% 5d",i); printf("\n");
 	for (j=jlo;j<=jhi;j++) {
 		printf("%d\t",j);
-		for (i=ilo;i<=ihi;i++) printf("\t %g",gsl_matrix_get(mat,(size_t)i,(size_t)j));
+		for (i=ilo;i<=ihi;i++) printf("\t %g",dmatrix_get(mat,(size_t)i,(size_t)j));
 		printf("\n");
 	}
 }

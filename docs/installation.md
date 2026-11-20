@@ -20,13 +20,12 @@ The build needs these tools and libraries:
 | --- | --- |
 | GCC with C99 support | Compiles all native code |
 | CMake 3.24 or later and Ninja | Build system (pip installs them from PyPI when they are absent) |
-| GSL 2.8 with headers | Indexing and reconstruction |
 | HDF5 1.14 with headers and `h5cc` | Peak search and reconstruction |
 | zlib with headers | HDF5 compression |
 | OpenMP (part of GCC) | CPU reconstruction |
 | `patchelf` | Normalizes library search paths in the installed files (pip installs it from PyPI) |
 
-Other minor versions of GSL and HDF5 can work, but the tests run against the versions above.
+Other minor versions of HDF5 can work, but the tests run against the version above.
 
 Running the complete native memory regression test also requires Valgrind and a C compiler available as `cc`. Both are included in `environment.yml`; on Debian or Ubuntu install `valgrind` alongside `build-essential`.
 
@@ -34,7 +33,7 @@ CUDA is not required. See [GPU reconstruction](#gpu-reconstruction).
 
 ## Install with conda (recommended)
 
-Use this path at APS and for alpha testing. `environment.yml` provides the compiler and native libraries from conda-forge. Build, install, and run `lauelab` in this environment so the native programs can load the same GSL and HDF5 libraries.
+Use this path at APS and for alpha testing. `environment.yml` provides the compiler and native libraries from conda-forge. Build, install, and run `lauelab` in this environment so the native programs can load the same HDF5 libraries.
 
 1. Clone the repository:
 
@@ -75,7 +74,7 @@ Use this path on a Linux system that already provides the native dependencies, f
 1. Install the native dependencies. On Debian or Ubuntu:
 
    ```console
-   $ sudo apt-get install build-essential libgsl-dev libhdf5-dev zlib1g-dev valgrind
+   $ sudo apt-get install build-essential libhdf5-dev zlib1g-dev valgrind
    ```
 
 2. Create and activate a virtual environment:
@@ -93,7 +92,7 @@ Use this path on a Linux system that already provides the native dependencies, f
 
 Do not run `pip` with `sudo`.
 
-The installed programs find GSL and HDF5 through the dynamic loader's search path. If environment modules or another non-system prefix provides the libraries, add its library directory to `LD_LIBRARY_PATH` at run time. A virtual environment does not inherit access to libraries from a separate Conda environment. Do not move a wheel built in one environment into another environment unless the target provides compatible native libraries.
+The installed programs find HDF5, zlib and the GCC OpenMP library (`libgomp`) through the dynamic loader's search path. If environment modules or another non-system prefix provides the libraries, add its library directory to `LD_LIBRARY_PATH` at run time. A virtual environment does not inherit access to libraries from a separate Conda environment. Do not move a wheel built in one environment into another environment unless the target provides compatible native libraries.
 
 ## Verify the installation
 
@@ -133,7 +132,7 @@ A default installation builds all of these:
 
 The package includes the in-process indexing API and the supported LaueGo subprocess interfaces and command-line programs. The build stops with an error when a required dependency is missing or a component fails to compile. It does not install a partial package.
 
-Native code is compiled for the generic x86-64 baseline with SSE2. The same installed files run on any x86-64 Linux machine that has compatible GSL and HDF5 libraries.
+Native code is compiled for the generic x86-64 baseline with SSE2. The same installed files run on any x86-64 Linux machine that has compatible HDF5, zlib and `libgomp` libraries.
 
 (gpu-reconstruction)=
 
@@ -141,15 +140,15 @@ Native code is compiled for the generic x86-64 baseline with SSE2. The same inst
 
 CPU reconstruction is the supported path. The package does not build or distribute the CUDA reconstruction program, and it does not detect CUDA during installation. `reconstruct_gpu()` can run an externally installed `reconstructN_gpu` executable from `PATH`. It raises `FileNotFoundError` when the executable is unavailable.
 
-The source distribution and repository include the CUDA source and a stand-alone Makefile in `src/lauelab/reconstruct/source/recon_gpu/`. This build is not part of the maintained package installation.
+The source distribution and repository include the CUDA source and a stand-alone Makefile in `src/lauelab/reconstruct/source/recon_gpu/`. This build is not part of the maintained package installation. Unlike the package, it still needs GSL with headers, which `environment.yml` does not install; add it with `conda install -c conda-forge gsl`.
 
 ## Troubleshooting
 
-**The build reports that GSL or HDF5 was not found.** Install the development package that provides headers and `gsl-config` or `h5cc`, then run `pip install .` again. In a conda environment, confirm that the environment is active.
+**The build reports that HDF5 was not found.** Install the development package that provides the HDF5 headers and `h5cc`, then run `pip install .` again. In a conda environment, confirm that the environment is active.
 
 **The build reports that `patchelf` is required.** This appears only with `pip install --no-build-isolation`. Install `patchelf` into the environment (`pip install patchelf` or `conda install -c conda-forge patchelf`).
 
-**`liblaue.so` fails to load with "cannot open shared object file".** The dynamic loader cannot find `libgsl` or `libhdf5`. Activate the environment that provides them, or add their directory to `LD_LIBRARY_PATH`.
+**`liblaue.so` or a native program fails to load with "cannot open shared object file".** The dynamic loader cannot find `libgomp` (needed by `liblaue.so` and `reconstructN_cpu`) or `libhdf5` (needed by `peaksearch` and `reconstructN_cpu`). Activate the environment that provides them, or add their directory to `LD_LIBRARY_PATH`.
 
 **`reconstructN_gpu` is not found.** GPU reconstruction is not built by the package. See [GPU reconstruction](#gpu-reconstruction).
 

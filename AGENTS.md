@@ -122,7 +122,7 @@ change grows the public surface, say so explicitly and justify it.
 - `src/lauelab/_native.py` — the one CFFI loader and cdef for `liblaue.so`,
   shared by `indexing` and `reconstruct`.
 - `src/lauelab/indexing` — `Indexer`, `Geometry`, lauego wrappers; native C
-  under `indexing/src/` (peaksearch, pixels2qs, euler, liblaue). The
+  under `indexing/src/` (peaksearch, pixels2qs, euler, liblaue, minpack). The
   reconstruction kernel is `indexing/src/liblaue/liblaue_recon.c`.
 - `src/lauelab/analysis` — orientation math, simulation (vendored JZT
   backend), coloring.

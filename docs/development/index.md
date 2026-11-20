@@ -12,7 +12,7 @@ $ python -m pip install -e '.[test,docs]'
 
 The editable install builds the native files once with CMake and places them in `site-packages`. Python changes under `src/` take effect immediately. After a change to C source or `CMakeLists.txt`, run the install command again.
 
-`CMakeLists.txt` at the repository root is the only native build definition. `liblaue.so` embeds the GPL-licensed GSL using static `libgsl.a` and `libgslcblas.a` from the build environment, with their symbols hidden by `--exclude-libs`; importing the wheel therefore does not load the environment's `libgsl.so` or OpenBLAS. It has these options, set with `--config-settings=cmake.define.<OPTION>=<value>` on the pip command line:
+`CMakeLists.txt` at the repository root is the only native build definition. It has these options, set with `--config-settings=cmake.define.<OPTION>=<value>` on the pip command line:
 
 | Option | Default | Effect |
 | --- | --- | --- |
@@ -33,7 +33,21 @@ $ cmake -S . -B build-cmake -G Ninja
 $ cmake --build build-cmake
 ```
 
-CUDA is not part of the package build. See `src/lauelab/reconstruct/source/recon_gpu/README.md`.
+CUDA is not part of the package build. See `src/lauelab/reconstruct/source/recon_gpu/README.md`. The stand-alone GPU build still needs GSL.
+
+### Numerical solvers in the native code
+
+The CPU build (`liblaue.so`, `peaksearch`, `pix2qs`, `euler` and `reconstructN_cpu`) needs no GSL or BLAS library. The code used GSL in three places; these replace it:
+
+- The peak fits in `peaksearch` and `liblaue.so` use MINPACK's Levenberg-Marquardt method (`lmder` with internal scaling) from cminpack 1.3.11, in `src/lauelab/indexing/src/minpack/`. Its `README.md` records the source archive, the licence, and how `lmsder.c` differs from `lmder`. The MINPACK copyright notice is included in the wheel's licence files.
+- Orientation refinement in `euler` and `liblaue.so` uses the Nelder-Mead simplex in `src/lauelab/indexing/src/euler/src/nmsimplex.c`. For the same scattering vectors it returns the same orientations, bit for bit, as GSL's `nmsimplex` did in `liblaue.so`. The comment at the top of the file states the rules that this depends on; keep them when you change the file. The `euler` program was linked to OpenBLAS, whose vector norm can differ in the last bit. Where the size of the simplex falls within that bit of the stopping tolerance (1e-6 rad), `euler` stops one iteration earlier or later than it did.
+- `reconstructN_cpu` keeps its images in the matrix helpers in `src/lauelab/reconstruct/source/recon_cpu/source/WireScanDataTypesN.h`. Reconstructed images are the same, bit for bit, as with GSL's matrices.
+
+The peak fits use the same method as GSL's `lmsder`, but the floating-point operations run in a different order, so fitted values differ from those of a GSL build. `peaksearch` and `liblaue.so` now return the same fits. With GSL they differed from each other in the same way, because `peaksearch` was linked to OpenBLAS and `liblaue.so` to GSL's own BLAS.
+
+In a comparison with the GSL build of `liblaue.so` on synthetic frames, measured frames and measured depth images, with `boxsize` from 5 to 18 and a threshold of 100 counts or of 3 to 4 standard deviations, 98 % of the fitted positions were equal to the last bit. The largest differences were 0.0009 pixel in position, 0.0004 pixel in half-width and 0.005° in tilt, and both builds found the same peaks.
+
+One build can accept a peak that the other rejects where the data do not determine the fit: with `boxsize` below 5, with a threshold near the noise level (a `threshold_ratio` of about 1), where pixels of equal value, such as a saturated region, fill the fit region, and where the two starting widths of a peak are equal, as for a noiseless ellipse tilted by 45°. In these cases the two GSL builds disagreed with each other at about the same rate.
 
 ## Run tests
 

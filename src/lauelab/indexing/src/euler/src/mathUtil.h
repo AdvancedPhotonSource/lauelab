@@ -21,10 +21,7 @@
 #endif
 
 #ifdef _MSC_VER						/* identifies this as a Microsoft compiler */
-#include <gsl/gsl_math.h>			/* added RX2011 for NaN handling */
 #define round(A) ceil(A-0.5)		/* added RX2011 for round() function */
-#define NAN gsl_nan()				/* added RX2011 */
-#define isNAN(A) gsl_isnan(A)		/* added RX2011 */
 #endif
 
 #ifndef NAN							/* probably only needed for pcs */

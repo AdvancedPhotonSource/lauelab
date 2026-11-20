@@ -9,24 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <gsl/gsl_errno.h>
-
 #include "liblaue_internal.h"
 #include "peaksearch.h"
 #include "Euler.h"
+#include "nmsimplex.h"
 
 __thread FILE *fout;
-
-/*
- * GSL is linked statically, and its only abort reference is in gsl_error.
- * initialize_liblaue installs gsl_set_error_handler_off before any GSL call,
- * so that path is unreachable. Keep abort out of the library's imports, but
- * terminate rather than continue if this invariant is ever broken.
- */
-__attribute__((noreturn)) void __wrap_abort(void)
-{
-    __builtin_trap();
-}
 
 struct laue_crystal {
     struct crystalStructure value;
@@ -68,13 +56,11 @@ static void export_reciprocal_rows(
     }
 }
 
-/* GSL aborts on errors by default, which is unsafe in an embedded library. */
-#if defined(__GNUC__)
-__attribute__((constructor))
-#endif
-static void initialize_liblaue(void)
+/* Text of a peak-fitting status that reaches the caller. LMSDER_EBADLEN is the
+ * only such status. */
+static const char *fit_status_text(int status)
 {
-    gsl_set_error_handler_off();
+    return status == LMSDER_EBADLEN ? "matrix/vector sizes are not conformant" : "unknown error code";
 }
 
 laue_geometry *laue_geometry_from_file(const char *path, char *err, size_t errlen)
@@ -454,10 +440,10 @@ int laue_find_peaks_typed(const void *pixels, int pixel_type, int nx, int ny,
         );
         list_delete_with_values(blobs, delete_point_value);
         blobs = NULL;
-        if (!peaks || helper_status == GSL_ENOMEM) goto allocation_error;
-        if (helper_status != GSL_SUCCESS) {
+        if (!peaks || helper_status == LMSDER_ENOMEM) goto allocation_error;
+        if (helper_status != LMSDER_SUCCESS) {
             result->status = LAUE_NUMERICAL_ERROR;
-            snprintf(result->message, sizeof(result->message), "peak fitting failed: %s", gsl_strerror(helper_status));
+            snprintf(result->message, sizeof(result->message), "peak fitting failed: %s", fit_status_text(helper_status));
             goto cleanup;
         }
     }
@@ -708,8 +694,8 @@ int laue_index(const laue_crystal *crystal, const laue_index_params *params,
         }
         start_step = 10.0 * rms;
         status = optimizeEulerAngles(start_step, 1e-6, 100, &fit);
-        if (status != 0 && status != -2) {
-            result->status = status == GSL_ENOMEM ? LAUE_OUT_OF_MEMORY : LAUE_NUMERICAL_ERROR;
+        if (status != NMSIMPLEX_SUCCESS && status != NMSIMPLEX_CONTINUE) {
+            result->status = status == NMSIMPLEX_ENOMEM ? LAUE_OUT_OF_MEMORY : LAUE_NUMERICAL_ERROR;
             snprintf(result->message, sizeof(result->message), "orientation optimization failed");
             goto cleanup_found;
         }

@@ -35,7 +35,6 @@ jobs:
           # exports $CC; `cc` is also what the test suite's compiler probe uses.
           cc --version | head -1
           h5cc -showconfig | grep -i "HDF5 Version" || true
-          gsl-config --version
 
       - name: Verify the tree contains no generated artifacts
         shell: bash -el {0}

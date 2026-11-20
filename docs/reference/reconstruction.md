@@ -12,7 +12,7 @@ To index a depth image, select it with {class}`~lauelab.indexing.ScanFrame`, als
 
 Every other path returns a {class}`~lauelab.reconstruct.ReconstructionResult`. Runtime failures are recorded in that result. Invalid arguments and setup failures that occur before processing raise exceptions. The native path does not support the executable's `-F` parameter-file option or distortion maps.
 
-The subprocess environment defaults `OPENBLAS_NUM_THREADS` to `1`. The reconstruction programs link OpenBLAS through GSL but do not call BLAS, so extra OpenBLAS workers only consume CPU time. An existing caller setting is preserved. The `num_threads` argument independently controls the CPU program's OpenMP reconstruction threads. The executable's `image_range` (`-f`/`-l`) options apply only to scans stored as one file per image; multi-image HDF5 input used by `Reconstructor` has no file range.
+The subprocess environment of both programs defaults `OPENBLAS_NUM_THREADS` to `1`. `reconstructN_cpu` links no BLAS library, so the setting has no effect on it. The stand-alone GPU program links GSL, whose CBLAS library can load OpenBLAS, but it does not call BLAS, so extra OpenBLAS workers only consume CPU time. An existing caller setting is preserved. The `num_threads` argument independently controls the CPU program's OpenMP reconstruction threads. The executable's `image_range` (`-f`/`-l`) options apply only to scans stored as one file per image; multi-image HDF5 input used by `Reconstructor` has no file range.
 
 ## Differences from the executable
 

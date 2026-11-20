@@ -24,7 +24,6 @@ dependencies:
   - patchelf
   - valgrind
   # native libraries (compatible minor series; upgrade one family at a time)
-  - gsl=2.8.*
   - hdf5=1.14.*
   - zlib
   # binary Python dependencies, kept consistent with the libraries above

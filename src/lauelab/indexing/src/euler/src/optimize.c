@@ -9,8 +9,7 @@
 #include <math.h>
 #include <time.h>
 #include <limits.h>
-#include <gsl/gsl_multimin.h>
-//#include "/Users/tischler/dev/GNU/include/gsl/gsl_multimin.h"
+#include "nmsimplex.h"
 #include "Euler.h"
 
 #ifdef DEBUG_ON
@@ -20,7 +19,21 @@
 #define MIN(A,B)	( (A)<(B)?(A):(B) )
 #define MAX(A,B)	( (A)>(B)?(A):(B) )
 
-double my_f (const gsl_vector *v, void *params);
+double my_f (const double *v, void *params);
+
+/* When the minimizer cannot allocate memory or meets a non-finite function
+   value, the euler program prints a message and stops with abort(), as it
+   always has; liblaue returns the status to its caller instead. */
+static int solver_error(int status)
+{
+#ifndef LIBLAUE_BUILD
+	if (status == NMSIMPLEX_ENOMEM || status == NMSIMPLEX_EBADFUNC || status == NMSIMPLEX_EFAILED) {
+		fprintf(stderr,"ERROR -- optimizeEulerAngles(), %s\n", status == NMSIMPLEX_ENOMEM ? "cannot allocate the minimizer" : "non-finite function value encountered");
+		abort();
+	}
+#endif
+	return status;
+}
 
 
 
@@ -30,7 +43,7 @@ double my_f (const gsl_vector *v, void *params);
  * thus the returned value is a minimum for the optimimal Euler angles
  */
 double my_f(
-const gsl_vector *v,	/* vector with current value of Euler angles */
+const double *v,		/* vector with current value of Euler angles */
 void	*pattern)		/* pointer to the parameters, in this case a pointer to the pattern structure */
 {
 	double  G[3];						/* calculated G vector for each hkl */
@@ -47,9 +60,9 @@ void	*pattern)		/* pointer to the parameters, in this case a pointer to the patt
 	/* p = pattern; */
 	p = (struct patternOfOneGrain *)pattern;
 	N = p->Ni;											/* local value for convenience */
-	a = gsl_vector_get(v,0);							/* the Euler angles */
-	b = gsl_vector_get(v,1);
-	g = gsl_vector_get(v,2);
+	a = v[0];										/* the Euler angles */
+	b = v[1];
+	g = v[2];
 	MatrixCopy33(recip,p->xtal.recip);					/* copy unrotated reciprocal lattice into recip */
 
 	EulerMatrix(a,b,g,M_Euler);							/* make the rotation matrix M_Euler from Euler angles */
@@ -86,7 +99,7 @@ fprintf(stderr,"G[0] is NaN\n");
 		FillRecipInLattice(&(pattern.lattice));
 	to set the reciprocal lattice in the lattice structure
 */
-/* this routine optimizes approximate Euler angles using the gsl simplex method. */
+/* this routine optimizes approximate Euler angles using the Nelder-Mead simplex method. */
 int optimizeEulerAngles(
 double  startStep,					/* starting step size (radians), make this a bit larger than the error */
 double  epsAbs,						/* tolerance on the answer (=0.001) */
@@ -95,13 +108,10 @@ struct	patternOfOneGrain *pattern) /* provides G^'s and hkl's for one fitted pat
 {
 	size_t np = 3;					/* number of dimensions of the function, 3 Euler angles */
 
-	/* T tells what kind of minimizer we are using, select the simplex method */
-	const gsl_multimin_fminimizer_type *T = gsl_multimin_fminimizer_nmsimplex;
-	gsl_multimin_fminimizer *s = NULL;		/* this is the minimizer */
-	gsl_vector *ss = NULL, *x = NULL;			/* pointers to vectors, ss is stepsize, x is point */
-	gsl_multimin_function minex_func;		/* struct defining parts needed for minimizing */
+	nmsimplex *s = NULL;					/* this is the minimizer */
+	double ss[3], x[3];						/* ss is stepsize, x is point */
 	size_t iter=0, i;
-	int status;								/* status of returned gsl function, 0 is OK */
+	int status;								/* status of returned simplex function, 0 is OK */
 	double size;							/* size of minimizer, sort of maximum error */
 
 	double  G[3];							/* calculated G vector for each hkl */
@@ -115,40 +125,26 @@ struct	patternOfOneGrain *pattern) /* provides G^'s and hkl's for one fitted pat
 	if (!(pattern->Ghat) || !(pattern->hkls)) { fprintf(stderr,"Ghat or hkls are NULL on entry to optimizeEulerAngles()\n"); return 1; }
 	if ((pattern->xtal.a)<=0 || (pattern->xtal.b)<=0 || (pattern->xtal.c)<=0) { fprintf(stderr,"invalid lattice in optimizeEulerAngles()\n"); return 1; }
 
-	/* Initial vertex step size vector */
-	ss = gsl_vector_alloc(np);				/* step sizes in x and y */
-	if (!ss) return GSL_ENOMEM;
-
 	/* Set all step sizes to startStep, the starting step size */
-	gsl_vector_set_all(ss, startStep);		/* set ss[0] = ss[1]  = ss[2] = startStep (radian) */
+	ss[0] = ss[1] = ss[2] = startStep;		/* set ss[0] = ss[1]  = ss[2] = startStep (radian) */
 
 	/* Starting point */
-	x = gsl_vector_alloc(np);				/* allocate space for a vector of length 3 */
-	if (!x) { gsl_vector_free(ss); return GSL_ENOMEM; }
-	gsl_vector_set(x, 0, pattern->alpha);   /* set to starting guess, input (alpha,beta,gamma) */
-	gsl_vector_set(x, 1, pattern->beta);
-	gsl_vector_set(x, 2, pattern->gamma);
+	x[0] = pattern->alpha;					/* set to starting guess, input (alpha,beta,gamma) */
+	x[1] = pattern->beta;
+	x[2] = pattern->gamma;
 
-	/* Initialize the minimizer */
-	minex_func.f = &my_f;					/* the function that returns the value */
-	minex_func.n = np;						/* number of parameters */
-	minex_func.params = (void *)pattern;	/* a generic pointer that points to something with info for my_f() */
-	/* Note: my_func.df, and my_func.fdf are not needed since simplex method does not use derivatives */
-
-	s = gsl_multimin_fminimizer_alloc(T, np);	/* allocate for a 2d simplex minimizer named 's' */
-	if (!s) { gsl_vector_free(x); gsl_vector_free(ss); return GSL_ENOMEM; }
+	s = nmsimplex_alloc(np);				/* allocate for a 3d simplex minimizer named 's' */
+	if (!s) return solver_error(NMSIMPLEX_ENOMEM);
 
 	/* Set starting point for the minimizer:
 		for the minimizer 's',
-		working on a function 'minex_func'
-		starting from the initial guess x[2]
-		using step sizes of ss[2]  */
-	status = gsl_multimin_fminimizer_set(s, &minex_func, x, ss);
-	if (status != GSL_SUCCESS) {
-		gsl_multimin_fminimizer_free(s);
-		gsl_vector_free(x);
-		gsl_vector_free(ss);
-		return status;
+		working on the function my_f() with the pattern
+		starting from the initial guess x[3]
+		using step sizes of ss[3]  */
+	status = nmsimplex_set(s, &my_f, (void *)pattern, x, ss);
+	if (status != NMSIMPLEX_SUCCESS) {
+		nmsimplex_free(s);
+		return solver_error(status);
 	}
 
 #if (DEBUG)		/******************************************************************************/
@@ -160,33 +156,33 @@ struct	patternOfOneGrain *pattern) /* provides G^'s and hkl's for one fitted pat
 	iter = 0;
 	do {
 		iter++;
-		status = gsl_multimin_fminimizer_iterate(s);	/* do one iteration of the minimizer */
-		if (status) break;								/* status=0 is OK, check here for an error */
+		status = nmsimplex_iterate(s);					/* do one iteration of the minimizer */
+		if (status) { solver_error(status); break; }	/* status=0 is OK, check here for an error */
 
-		size = gsl_multimin_fminimizer_size (s); 		/* get 'size' of minimizer */
-		status = gsl_multimin_test_size (size, epsAbs);	/* test size against epsAbs */
+		size = nmsimplex_size(s);						/* get 'size' of minimizer */
+		status = size < epsAbs ? NMSIMPLEX_SUCCESS : NMSIMPLEX_CONTINUE;	/* test size against epsAbs */
 
 #if (DEBUG>1)		/******************************************************************************/
 		fprintf(fout,"%5ld  f(", iter);
 		for (i=0; i<np; i++) {
-			fprintf(fout,"%.8f", gsl_vector_get(s->x, i));
+			fprintf(fout,"%.8f", s->x[i]);
 			if (i<np-1) fprintf(fout,", ");
 		}
 		fprintf(fout,") = %15.8g size = %.5g\n", s->fval, size);
 #endif			/******************************************************************************/
-	} while (status == GSL_CONTINUE && iter < (size_t)maxIter); /* stop after maxIter regardless of size */
+	} while (status == NMSIMPLEX_CONTINUE && iter < (size_t)maxIter); /* stop after maxIter regardless of size */
 
 #if (DEBUG)		/******************************************************************************/
-	if (status == GSL_SUCCESS) fprintf(fout,"converged to minimum successfully\n");
+	if (status == NMSIMPLEX_SUCCESS) fprintf(fout,"converged to minimum successfully\n");
 	else fprintf(fout,"did not converge successfully, status = %d\n",status);
 	fprintf(fout, "  optimization changed Euler angles by (%15.10f, %15.10f, %15.10f) (deg.)\n", \
-		(gsl_vector_get(s->x,0)-pattern->alpha)*180/M_PI, (gsl_vector_get(s->x,1)-pattern->beta)*180/M_PI, \
-		(gsl_vector_get(s->x,2)-pattern->gamma)*180/M_PI);
+		(s->x[0]-pattern->alpha)*180/M_PI, (s->x[1]-pattern->beta)*180/M_PI, \
+		(s->x[2]-pattern->gamma)*180/M_PI);
 #endif			/******************************************************************************/
 
-	pattern->alpha = gsl_vector_get(s->x,0);			/* set to final values, resultant (alpha,beta,gamma) returned */
-	pattern->beta = gsl_vector_get(s->x,1);
-	pattern->gamma = gsl_vector_get(s->x,2);
+	pattern->alpha = s->x[0];							/* set to final values, resultant (alpha,beta,gamma) returned */
+	pattern->beta = s->x[1];
+	pattern->gamma = s->x[2];
 
 #if (DEBUG)		/******************************************************************************/
 	fprintf(fout, "after minimization, Euler angles are (%15.10f, %15.10f, %15.10f) (deg.)\n", \
@@ -205,9 +201,7 @@ struct	patternOfOneGrain *pattern) /* provides G^'s and hkl's for one fitted pat
 		(pattern->err)[i] = acos(MIN(dot,1.0));
 	}
 
-	gsl_vector_free(x);									/* free vector of x,y positions */
-	gsl_vector_free(ss);								/* free vector of step sizes */
-	gsl_multimin_fminimizer_free (s);					/* free the minimizer */
+	nmsimplex_free(s);									/* free the minimizer */
 	return status;
 }
 

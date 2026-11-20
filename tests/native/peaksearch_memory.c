@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "liblaue.h"
 
@@ -126,6 +127,7 @@ int main(void)
     laue_peak_params params = {0};
     int iteration;
     int index;
+    int shape;
 
     for (index = 0; index < IMAGE_WIDTH * IMAGE_HEIGHT; ++index) pixels[index] = 10;
     add_gaussian(pixels, 12, 12);
@@ -187,6 +189,52 @@ int main(void)
                     iteration, result.n_peaks);
             laue_frame_result_free(&result);
             return 1;
+        }
+        laue_frame_result_free(&result);
+    }
+
+    /* Peak-fit paths, for both peak shapes: with boxsize 1 the fit region is
+       3 x 3 pixels, so the 1-D starting fit has 3 data points for 4 parameters
+       and no solver is created; a flat plateau larger than the fit region gives
+       zero residuals; a NaN pixel inside a peak gives non-finite residuals. */
+    for (shape = 0; shape < 2; ++shape) {
+        laue_frame_result result = {0};
+        laue_peak_params small_box = params;
+        int status;
+
+        small_box.peak_shape = shape;
+        small_box.boxsize = 1;
+        status = laue_find_peaks(pixels, IMAGE_WIDTH, IMAGE_HEIGHT, &small_box, &result);
+        if (status != LAUE_NUMERICAL_ERROR ||
+            strcmp(result.message, "peak fitting failed: matrix/vector sizes are not conformant") != 0) {
+            fprintf(stderr, "boxsize 1, shape %d returned %d: %s\n", shape, status, result.message);
+            laue_frame_result_free(&result);
+            return 1;
+        }
+        laue_frame_result_free(&result);
+    }
+    for (iteration = 0; iteration < 4; ++iteration) {
+        laue_frame_result result = {0};
+        laue_peak_params edge = params;
+        int x;
+        int y;
+        int status;
+
+        edge.peak_shape = iteration / 2;
+        for (index = 0; index < IMAGE_WIDTH * IMAGE_HEIGHT; ++index) double_pixels[index] = pixels[index];
+        if (iteration % 2 == 0) {
+            for (y = 30; y < 50; ++y) {
+                for (x = 30; x < 60; ++x) double_pixels[y * IMAGE_WIDTH + x] = 3000.0;
+            }
+            edge.boxsize = 3;
+        } else {
+            double_pixels[12 * IMAGE_WIDTH + 12] = NAN;
+        }
+        status = laue_find_peaks_typed(double_pixels, LAUE_PIXEL_F64, IMAGE_WIDTH, IMAGE_HEIGHT, &edge, &result);
+        if (status != LAUE_OK) {
+            fprintf(stderr, "solver edge frame %d failed: %s\n", iteration, result.message);
+            laue_frame_result_free(&result);
+            return status;
         }
         laue_frame_result_free(&result);
     }

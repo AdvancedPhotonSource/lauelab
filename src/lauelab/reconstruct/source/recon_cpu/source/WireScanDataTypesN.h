@@ -3,7 +3,136 @@
 #ifndef WSDT
 #define WSDT 1
 
-#include <gsl/gsl_matrix.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {	/* a matrix of doubles, element (i,j) is data[i*tda + j] */
+	size_t	size1;			/* number of rows */
+	size_t	size2;			/* number of columns */
+	size_t	tda;			/* distance between rows, equal to size2 */
+	double	*data;
+} dmatrix;
+
+typedef struct {	/* a matrix of floats, element (i,j) is data[i*tda + j] */
+	size_t	size1;
+	size_t	size2;
+	size_t	tda;
+	float	*data;
+} fmatrix;
+
+/* An index outside a matrix, two matrices of different sizes or a failed
+   allocation is a fatal error: print it and stop with abort(). */
+static inline void matrix_error(const char *message) {
+	fprintf(stderr, "ERROR -- %s\n", message);
+	abort();
+}
+
+static inline dmatrix *dmatrix_calloc(size_t n1, size_t n2) {	/* all elements zero */
+	dmatrix *m = malloc(sizeof(dmatrix));
+	if (!m || !(m->data = calloc(n1 * n2 ? n1 * n2 : 1, sizeof(double)))) matrix_error("cannot allocate space for a matrix");
+	m->size1 = n1;
+	m->size2 = m->tda = n2;
+	return m;
+}
+
+static inline void dmatrix_free(dmatrix *m) {
+	if (!m) return;
+	free(m->data);
+	free(m);
+}
+
+static inline double *dmatrix_ptr(dmatrix *m, size_t i, size_t j) {
+	if (i >= m->size1 || j >= m->size2) matrix_error("matrix index out of range");
+	return m->data + i * m->tda + j;
+}
+
+static inline double dmatrix_get(const dmatrix *m, size_t i, size_t j) {
+	if (i >= m->size1 || j >= m->size2) matrix_error("matrix index out of range");
+	return m->data[i * m->tda + j];
+}
+
+static inline void dmatrix_set(dmatrix *m, size_t i, size_t j, double x) {
+	*dmatrix_ptr(m, i, j) = x;
+}
+
+static inline void dmatrix_set_zero(dmatrix *m) {
+	size_t i, j;
+	for (i = 0; i < m->size1; i++) for (j = 0; j < m->size2; j++) m->data[i * m->tda + j] = 0.0;
+}
+
+static inline void dmatrix_scale(dmatrix *a, double x) {		/* a(i,j) *= x */
+	size_t i, j, n1 = a->size1, n2 = a->size2;
+	for (i = 0; i < n1; i++) {
+		double *row = a->data + i * a->tda;
+		#pragma omp simd
+		for (j = 0; j < n2; j++) row[j] *= x;
+	}
+}
+
+static inline void dmatrix_mul_elements(dmatrix *a, const dmatrix *b) {	/* a(i,j) *= b(i,j) */
+	size_t i, j;
+	if (a->size1 != b->size1 || a->size2 != b->size2) matrix_error("matrix sizes are not conformant");
+	for (i = 0; i < a->size1; i++) {
+		double *row = a->data + i * a->tda;
+		const double *other = b->data + i * b->tda;
+		size_t n2 = a->size2;
+		#pragma omp simd
+		for (j = 0; j < n2; j++) row[j] *= other[j];
+	}
+}
+
+static inline void dmatrix_sub(dmatrix *a, const dmatrix *b) {	/* a(i,j) -= b(i,j) */
+	size_t i, j;
+	if (a->size1 != b->size1 || a->size2 != b->size2) matrix_error("matrix sizes are not conformant");
+	for (i = 0; i < a->size1; i++) {
+		double *row = a->data + i * a->tda;
+		const double *other = b->data + i * b->tda;
+		size_t n2 = a->size2;
+		#pragma omp simd
+		for (j = 0; j < n2; j++) row[j] -= other[j];
+	}
+}
+
+static inline double dmatrix_max(const dmatrix *m) {	/* NaN if any element is NaN */
+	double max = m->data[0], x;
+	size_t i, j;
+	for (i = 0; i < m->size1; i++) for (j = 0; j < m->size2; j++) {
+		x = m->data[i * m->tda + j];
+		if (x > max) max = x;
+		if (isnan(x)) return x;
+	}
+	return max;
+}
+
+static inline double dmatrix_min(const dmatrix *m) {	/* NaN if any element is NaN */
+	double min = m->data[0], x;
+	size_t i, j;
+	for (i = 0; i < m->size1; i++) for (j = 0; j < m->size2; j++) {
+		x = m->data[i * m->tda + j];
+		if (x < min) min = x;
+		if (isnan(x)) return x;
+	}
+	return min;
+}
+
+static inline fmatrix *fmatrix_alloc(size_t n1, size_t n2) {	/* elements not initialized */
+	fmatrix *m = malloc(sizeof(fmatrix));
+	if (!m || !(m->data = malloc((n1 * n2 ? n1 * n2 : 1) * sizeof(float)))) matrix_error("cannot allocate space for a matrix");
+	m->size1 = n1;
+	m->size2 = m->tda = n2;
+	return m;
+}
+
+static inline float fmatrix_get(const fmatrix *m, size_t i, size_t j) {
+	if (i >= m->size1 || j >= m->size2) matrix_error("matrix index out of range");
+	return m->data[i * m->tda + j];
+}
+
+static inline void fmatrix_set(fmatrix *m, size_t i, size_t j, float x) {
+	if (i >= m->size1 || j >= m->size2) matrix_error("matrix index out of range");
+	m->data[i * m->tda + j] = x;
+}
 
 typedef struct {	/* standard R3 coordinate system. */
 	double x;
@@ -44,9 +173,9 @@ typedef struct		/* a generic void vector, be careful with this one */
  *} wire_scan_data; */
 
 typedef struct {
-	vvector	wire_scanned;				/* a vector of gsl_matrix raw wire scanned images (maybe cropped) */
+	vvector	wire_scanned;				/* a vector of dmatrix raw wire scanned images (maybe cropped) */
 	xyzvector wire_positions;			/* wire location in a wire scan - same size as wire_scanned for each wire_scanned */
-	vvector	depth_resolved;				/* a vector of gsl_matrix depth-resolved images */
+	vvector	depth_resolved;				/* a vector of dmatrix depth-resolved images */
 	dvector	depth_intensity;			/* sum of the intensity at each depth */
 } ws_image_set;
 

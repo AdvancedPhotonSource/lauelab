@@ -24,8 +24,8 @@ extern ws_imaging_parameters imaging_parameters;
 extern ws_image_set image_set;
 extern ws_user_preferences user_preferences;
 
-extern gsl_matrix * intensity_map;
-extern gsl_matrix * intensity_norm;
+extern dmatrix * intensity_map;
+extern dmatrix * intensity_norm;
 
 /* extra data-holders defined for parallel version */
 extern vvector p_read_buffer[2]; 	// buffer to hold input data for parallel execution

@@ -205,8 +205,10 @@ def _execute_reconstruction(
             if path.is_file()
         } if output_dir.exists() else {}
 
-        # The executable links OpenBLAS through GSL but does not call BLAS. Avoid
-        # starting its otherwise spinning worker pool unless the caller opted in.
+        # The stand-alone GPU executable links GSL, whose CBLAS library can load
+        # OpenBLAS, but it does not call BLAS. Avoid starting OpenBLAS's
+        # otherwise spinning worker pool unless the caller opted in. The CPU
+        # executable links no BLAS library, so the setting has no effect on it.
         env = os.environ.copy()
         env.setdefault("OPENBLAS_NUM_THREADS", "1")
         result = subprocess.run(

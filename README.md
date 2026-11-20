@@ -11,7 +11,7 @@ Read the [documentation](https://advancedphotonsource.github.io/lauelab/) for in
 
 ## Install
 
-The package builds from source on Linux x86-64. It needs GCC, GSL, HDF5, and Python 3.11, 3.12, or 3.13. The conda environment in `environment.yml` provides all of them.
+The package builds from source on Linux x86-64. It needs GCC, HDF5, and Python 3.11, 3.12, or 3.13. The conda environment in `environment.yml` provides all of them.
 
 ```bash
 git clone https://github.com/AdvancedPhotonSource/lauelab.git

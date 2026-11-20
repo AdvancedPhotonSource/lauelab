@@ -7,8 +7,10 @@ name = "lauelab"
 version = "0.1.0"
 description = "A package for Laue diffraction analysis including indexing and reconstruction"
 readme = "README.md"
-license = "LicenseRef-UChicago-Argonne-BSD"  # Argonne BSD-style terms; see LICENSE
-license-files = ["LICENSE"]
+# Argonne BSD-style terms (LICENSE); the native code includes MINPACK routines
+# under the MINPACK copyright notice (src/lauelab/indexing/src/minpack/).
+license = "LicenseRef-UChicago-Argonne-BSD AND Minpack"
+license-files = ["LICENSE", "src/lauelab/indexing/src/minpack/CopyrightMINPACK.txt"]
 requires-python = ">=3.11,<3.14"
 authors = [
     {name = "Advanced Photon Source"},

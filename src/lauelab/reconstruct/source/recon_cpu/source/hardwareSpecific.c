@@ -16,8 +16,8 @@
 
 static size_t myEpoch(int year, int month, int date, int hour, int min, int sec);
 
-gsl_matrix_float * distortion_map_i = NULL;
-gsl_matrix_float * distortion_map_j = NULL;
+fmatrix * distortion_map_i = NULL;
+fmatrix * distortion_map_j = NULL;
 
 int	positionerType = 0;				/*	0 means no correction (the default)		initialized here
 										1 means PM500 correction from May 2006
@@ -197,8 +197,8 @@ point_ccd peakcorrection(point_ccd pixel)
 	j = MIN(j,2083);
 	#warning "change 2083 to a variablle, probably calibration.ccd_pixels_i-1 and calibration.ccd_pixels_j-1"
 
-	corrected.i = pixel.i + gsl_matrix_float_get(distortion_map_i, i, j);	/* add the distortion correction */
-	corrected.j = pixel.j + gsl_matrix_float_get(distortion_map_j, i, j);
+	corrected.i = pixel.i + fmatrix_get(distortion_map_i, i, j);	/* add the distortion correction */
+	corrected.j = pixel.j + fmatrix_get(distortion_map_j, i, j);
 	return corrected;
 }
 #endif
@@ -218,8 +218,8 @@ void load_peak_correction_maps(char *filename)
 	buffer = (float*)malloc (4 * 2084*2084 * 2);
 	if (!buffer) {fprintf(stderr,"\nCould not allocate buffer %ld bytes in load_peak_correction_maps()\n",4*2084*2084*2); exit(1);}
 
-	distortion_map_i = gsl_matrix_float_alloc (2084, 2084);
-	distortion_map_j = gsl_matrix_float_alloc (2084, 2084);
+	distortion_map_i = fmatrix_alloc (2084, 2084);
+	distortion_map_j = fmatrix_alloc (2084, 2084);
 
 	FILE *readfile;
 	readfile = fopen(filename.c_str(), "r");
@@ -238,11 +238,11 @@ void load_peak_correction_maps(char *filename)
 
 	for (j = 0; j < 2084; j++) {
 		for (i = 0; i < 2084; i++) {
-			gsl_matrix_float_set(distortion_map_i, i, j, buffer[j*2084 + i]);
-			gsl_matrix_float_set(distortion_map_j, i, j, buffer[2084*2084 + j*2084 + i]);
+			fmatrix_set(distortion_map_i, i, j, buffer[j*2084 + i]);
+			fmatrix_set(distortion_map_j, i, j, buffer[2084*2084 + j*2084 + i]);
 		}
 	}
-	if (verbose > 2) printf("\n   transfered distortion map to a gsl matrix");
+	if (verbose > 2) printf("\n   transfered distortion map to a matrix");
 	free (buffer);
 }
 #endif
